@@ -487,7 +487,6 @@ process_media() {
     # If TV show processing fails, try movies
     if run_filebot -rename "${source_dir}" \
         --db TheMovieDB \
-        -non-strict \
         --format "{plex}" \
         --output "${MOVIES_PATH}" \
         -r \
