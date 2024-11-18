@@ -12,20 +12,59 @@ TEST_MODE="${TEST_MODE:-false}"
 TEST_RUNNER="${TEST_RUNNER:-false}"
 
 # Constants
-readonly PLEX_SERVER="http://localhost:32400"
-readonly PLEX_TOKEN="***REMOVED***"
-readonly PLEX_MEDIA_PATH="/Volumes/DSMedia/Media"
-readonly MOVIES_PATH="${PLEX_MEDIA_PATH}"
-readonly TV_PATH="${PLEX_MEDIA_PATH}"
-readonly LOG_FILE="${HOME:-/Users/andrewrich}/.filebot/logs/transmission-processing.log"
-readonly MAX_LOG_SIZE=$((10*1024*1024))  # 10MB
+readonly SCRIPT_DIR
+SCRIPT_DIR="$( dirname "$( realpath "${BASH_SOURCE[0]}" )" )"
+readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
+readonly USER_CONFIG="${HOME:-/Users/andrewrich}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v)   # silent, fail on error, 10 second timeout, verbose
 
-# Create log directory if it doesn't exist
-mkdir -p "$(dirname "${LOG_FILE}")"
+# Config vars
+PLEX_SERVER=""
+PLEX_TOKEN=""
+PLEX_MEDIA_PATH=""
+LOG_FILE=""
+MAX_LOG_SIZE=0
+
+# Function to read config
+read_config() {
+    if ! command -v yq >/dev/null 2>&1; then
+        printf 'Error: yq is required but not installed\n' >&2
+        exit 1
+    fi
+
+    # Determine which config file to use
+    local config_file
+    if [[ -f "${LOCAL_CONFIG}" ]]; then
+        config_file="${LOCAL_CONFIG}"
+    elif [[ -f "${USER_CONFIG}" ]]; then
+        config_file="${USER_CONFIG}"
+    else
+        printf 'Error: No config file found. Checked:\n%s\n%s\n' "${LOCAL_CONFIG}" "${USER_CONFIG}" >&2
+        exit 1
+    fi
+
+    # Read and validate config
+    if ! yq eval '.' "${config_file}" >/dev/null 2>&1; then
+        printf 'Error: Invalid YAML in config file: %s\n' "${config_file}" >&2
+        exit 1
+    fi
+
+    PLEX_SERVER=$(yq eval '.plex.server' "${config_file}")
+    PLEX_TOKEN=$(yq eval '.plex.token' "${config_file}")
+    PLEX_MEDIA_PATH=$(yq eval '.plex.media_path' "${config_file}")
+    LOG_FILE=$(yq eval '.logging.file' "${config_file}" | envsubst)
+    MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
+
+    # Log which config we're using (but not in test mode)
+    if [[ "${TEST_MODE}" != "true" ]]; then
+        printf 'Using config file: %s\n' "${config_file}" >&2
+    fi
+}
 
 # Log function with timestamp
 log() {
+	# Create log directory if it doesn't exist
+	mkdir -p "$(dirname "${LOG_FILE}")"
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     printf '[%s] %s\n' "${timestamp}" "$1" | tee -a "${LOG_FILE}"
@@ -392,30 +431,6 @@ run_tests() {
     fi
 }
 
-# If in test mode and not being called as a test subject, run all tests
-if [[ "${TEST_MODE}" == "true" ]] && [[ "${TEST_RUNNER}" == "false" ]]; then
-    # This is the entrypoint for test mode - we only want to run tests here
-    run_tests
-    exit $?
-fi
-
-# Ensure required environment variables are set
-if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
-    printf 'Error: Required Transmission environment variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
-    exit 1
-fi
-
-# Verify Plex media path exists and is writable
-if [[ ! -d "${PLEX_MEDIA_PATH}" ]]; then
-    printf 'Error: Plex media path %s does not exist\n' "${PLEX_MEDIA_PATH}" >&2
-    exit 1
-fi
-
-if [[ ! -w "${PLEX_MEDIA_PATH}" ]]; then
-    printf 'Error: No write permission to %s\n' "${PLEX_MEDIA_PATH}" >&2
-    exit 1
-fi
-
 # Log rotation function
 rotate_log() {
     if [[ -f "${LOG_FILE}" ]] && [[ $(stat -f%z "${LOG_FILE}") -gt ${MAX_LOG_SIZE} ]]; then
@@ -473,7 +488,7 @@ process_media() {
         --db TheTVDB \
         -non-strict \
         --format "{plex}" \
-        --output "${TV_PATH}" \
+        --output "${PLEX_MEDIA_PATH}" \
         -r \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
@@ -488,7 +503,7 @@ process_media() {
     if run_filebot -rename "${source_dir}" \
         --db TheMovieDB \
         --format "{plex}" \
-        --output "${MOVIES_PATH}" \
+        --output "${PLEX_MEDIA_PATH}" \
         -r \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
@@ -519,5 +534,32 @@ main() {
 
     log "Processing completed successfully"
 }
+
+# read the external config file
+read_config || exit 1
+
+# If in test mode and not being called as a test subject, run all tests
+if [[ "${TEST_MODE}" == "true" ]] && [[ "${TEST_RUNNER}" == "false" ]]; then
+    # This is the entrypoint for test mode - we only want to run tests here
+    run_tests
+    exit $?
+fi
+
+# Ensure required environment variables are set
+if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
+    printf 'Error: Required Transmission environment variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
+    exit 1
+fi
+
+# Verify Plex media path exists and is writable
+if [[ ! -d "${PLEX_MEDIA_PATH}" ]]; then
+    printf 'Error: Plex media path %s does not exist\n' "${PLEX_MEDIA_PATH}" >&2
+    exit 1
+fi
+
+if [[ ! -w "${PLEX_MEDIA_PATH}" ]]; then
+    printf 'Error: No write permission to %s\n' "${PLEX_MEDIA_PATH}" >&2
+    exit 1
+fi
 
 main "$@"

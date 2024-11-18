@@ -1,0 +1,8 @@
+---
+plex:
+  server: http://localhost:32400
+  token: ***REMOVED***
+  media_path: /Volumes/DSMedia/Media
+logging:
+  file: ${HOME:-/Users/andrewrich}/.filebot/logs/transmission-processing.log
+  max_size: 10485760
