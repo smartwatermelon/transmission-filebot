@@ -12,8 +12,7 @@ TEST_MODE="${TEST_MODE:-false}"
 TEST_RUNNER="${TEST_RUNNER:-false}"
 
 # Constants
-readonly SCRIPT_DIR
-SCRIPT_DIR="$( dirname "$( realpath "${BASH_SOURCE[0]}" )" )"
+SCRIPT_DIR="$( dirname "$( realpath "${BASH_SOURCE[0]}" )" )"; readonly SCRIPT_DIR
 readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
 readonly USER_CONFIG="${HOME:-/Users/andrewrich}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v)   # silent, fail on error, 10 second timeout, verbose
@@ -49,10 +48,36 @@ read_config() {
         exit 1
     fi
 
+    # Get the default home path first
+    local default_home
+    default_home=$(yq eval '.paths.default_home' "${config_file}")
+    if [[ -z "${default_home}" ]]; then
+        printf 'Error: default_home not set in config\n' >&2
+        exit 1
+    fi
+
+    # Determine which home directory to use
+    local effective_home
+    if [[ -n "${HOME:-}" ]] && [[ -d "${HOME}" ]]; then
+        effective_home="${HOME}"
+        printf 'Using environment HOME: %s\n' "${effective_home}" >&2
+    else
+        effective_home="${default_home}"
+        printf 'Using default home from config: %s\n' "${effective_home}" >&2
+    fi
+
     PLEX_SERVER=$(yq eval '.plex.server' "${config_file}")
     PLEX_TOKEN=$(yq eval '.plex.token' "${config_file}")
     PLEX_MEDIA_PATH=$(yq eval '.plex.media_path' "${config_file}")
-    LOG_FILE=$(yq eval '.logging.file' "${config_file}" | envsubst)
+
+    # Get log file path relative to home
+    local log_path
+    log_path=$(yq eval '.logging.file' "${config_file}")
+    LOG_FILE="${effective_home}/${log_path}"
+
+    # Debug the result
+    printf 'Final log path: %s\n' "${LOG_FILE}" >&2
+exit
     MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
 
     # Log which config we're using (but not in test mode)
@@ -64,7 +89,11 @@ read_config() {
 # Log function with timestamp
 log() {
 	# Create log directory if it doesn't exist
-	mkdir -p "$(dirname "${LOG_FILE}")"
+    if [[ ! -d "$(dirname "${LOG_FILE}")" ]]; then
+        printf 'Warning: Log directory does not exist: %s\n' "$(dirname "${LOG_FILE}")" >&2
+        # Create it
+        mkdir -p "$(dirname "${LOG_FILE}")"
+    fi
     local timestamp
     timestamp=$(date '+%Y-%m-%d %H:%M:%S')
     printf '[%s] %s\n' "${timestamp}" "$1" | tee -a "${LOG_FILE}"
