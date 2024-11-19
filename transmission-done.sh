@@ -518,6 +518,7 @@ process_media() {
         --format "{plex}" \
         --output "${PLEX_MEDIA_PATH}" \
         -r \
+        --conflict override \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1; then
@@ -533,6 +534,7 @@ process_media() {
         --format "{plex}" \
         --output "${PLEX_MEDIA_PATH}" \
         -r \
+        --conflict override \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1; then
