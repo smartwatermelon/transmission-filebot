@@ -12,7 +12,7 @@ TEST_MODE="${TEST_MODE:-false}"
 TEST_RUNNER="${TEST_RUNNER:-false}"
 
 # Constants
-SCRIPT_DIR="$( dirname "$( realpath "${BASH_SOURCE[0]}" )" )"; readonly SCRIPT_DIR
+SCRIPT_DIR="$( dirname "$( /usr/local/bin/realpath "${BASH_SOURCE[0]}" )" )"; readonly SCRIPT_DIR
 readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
 readonly USER_CONFIG="${HOME:-/Users/andrewrich}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v)   # silent, fail on error, 10 second timeout, verbose
@@ -26,10 +26,11 @@ MAX_LOG_SIZE=0
 
 # Function to read config
 read_config() {
-    if ! command -v yq >/dev/null 2>&1; then
-        printf 'Error: yq is required but not installed\n' >&2
-        exit 1
-    fi
+	# Check yq
+	if ! /usr/local/bin/yq --version &>/dev/null; then
+		printf 'Error: yq required, not found in standard location /usr/local/bin/yq\n' >&2
+		exit 1
+	fi
 
     # Determine which config file to use
     local config_file
@@ -43,14 +44,14 @@ read_config() {
     fi
 
     # Read and validate config
-    if ! yq eval '.' "${config_file}" >/dev/null 2>&1; then
+    if ! /usr/local/bin/yq eval '.' "${config_file}" >/dev/null 2>&1; then
         printf 'Error: Invalid YAML in config file: %s\n' "${config_file}" >&2
         exit 1
     fi
 
     # Get the default home path first
     local default_home
-    default_home=$(yq eval '.paths.default_home' "${config_file}")
+    default_home=$(/usr/local/bin/yq eval '.paths.default_home' "${config_file}")
     if [[ -z "${default_home}" ]]; then
         printf 'Error: default_home not set in config\n' >&2
         exit 1
@@ -66,16 +67,16 @@ read_config() {
         printf 'Using default home from config: %s\n' "${effective_home}" >&2
     fi
 
-    PLEX_SERVER=$(yq eval '.plex.server' "${config_file}")
-    PLEX_TOKEN=$(yq eval '.plex.token' "${config_file}")
-    PLEX_MEDIA_PATH=$(yq eval '.plex.media_path' "${config_file}")
+    PLEX_SERVER=$(/usr/local/bin/yq eval '.plex.server' "${config_file}")
+    PLEX_TOKEN=$(/usr/local/bin/yq eval '.plex.token' "${config_file}")
+    PLEX_MEDIA_PATH=$(/usr/local/bin/yq eval '.plex.media_path' "${config_file}")
 
     # Get log file path relative to home
     local log_path
-    log_path=$(yq eval '.logging.file' "${config_file}")
+    log_path=$(/usr/local/bin/yq eval '.logging.file' "${config_file}")
     LOG_FILE="${effective_home}/${log_path}"
 
-    MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
+    MAX_LOG_SIZE=$(/usr/local/bin/yq eval '.logging.max_size' "${config_file}")
 
     # Log which config we're using (but not in test mode)
     if [[ "${TEST_MODE}" != "true" ]]; then
