@@ -75,9 +75,6 @@ read_config() {
     log_path=$(yq eval '.logging.file' "${config_file}")
     LOG_FILE="${effective_home}/${log_path}"
 
-    # Debug the result
-    printf 'Final log path: %s\n' "${LOG_FILE}" >&2
-exit
     MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
 
     # Log which config we're using (but not in test mode)
