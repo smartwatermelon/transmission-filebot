@@ -1,8 +1,10 @@
 ---
+paths:
+  default_home: /Users/andrewrich
 plex:
   server: http://localhost:32400
   token: brzNvAUnywsFmM6UrH8R
   media_path: /Volumes/DSMedia/Media
 logging:
-  file: ${HOME:-/Users/andrewrich}/.filebot/logs/transmission-processing.log
+  file: .filebot/logs/transmission-processing.log
   max_size: 10485760
