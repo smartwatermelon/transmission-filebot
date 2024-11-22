@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-#exec &> "/tmp/xm.log"
-#set -x
-
-## !/usr/bin/env -S PS4='\\033[0;33m+(${BASH_SOURCE:-$0}:${LINENO}):\\033[0m${FUNCNAME[0]:+${FUNCNAME[0]}():}' bash -x
-
-## !/usr/bin/env bash
 PATH=${PATH}:/usr/local/bin
 
 # Strict mode
