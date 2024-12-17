@@ -246,11 +246,12 @@ process_tv_show() {
 
     run_filebot -rename "${source_dir}" \
         --db TheTVDB \
-        -non-strict \
         --format "{plex}" \
         --output "${PLEX_MEDIA_PATH}" \
         -r \
         --conflict auto \
+        -strict \
+        --min-similarity 0.9 \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1
@@ -265,6 +266,8 @@ process_movie() {
         --output "${PLEX_MEDIA_PATH}" \
         -r \
         --conflict auto \
+        -strict \
+        --min-similarity 0.9 \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1
@@ -279,17 +282,50 @@ process_media() {
 
     check_disk_space || return 1
 
-    # Try TV shows first
-    if process_tv_show "${source_dir}"; then
-        log "Successfully processed as TV show"
-        success=true
-        success_type="show"
-    else
-        log "TV show processing failed, trying movie..."
+    # Try to determine media type first using filename patterns
+    local is_likely_tv=false
+    local is_likely_movie=false
+
+    if find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+' >/dev/null; then
+        is_likely_tv=true
+        log "Media appears to be a TV show based on filename pattern"
+    elif find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE '[12][0-9]{3}' >/dev/null; then
+        is_likely_movie=true
+        log "Media appears to be a movie based on filename pattern"
+    fi
+
+    # Process based on likely type first
+    if [[ "${is_likely_tv}" == "true" ]]; then
+        if process_tv_show "${source_dir}"; then
+            log "Successfully processed as TV show"
+            success=true
+            success_type="show"
+        else
+            log "TV show processing failed despite TV pattern match"
+        fi
+    elif [[ "${is_likely_movie}" == "true" ]]; then
         if process_movie "${source_dir}"; then
             log "Successfully processed as movie"
             success=true
             success_type="movie"
+        else
+            log "Movie processing failed despite movie pattern match"
+        fi
+    else
+        # If no clear pattern, try both but log a warning
+        log "Warning: Unable to determine media type from filename patterns"
+
+        if process_movie "${source_dir}"; then
+            log "Successfully processed as movie"
+            success=true
+            success_type="movie"
+        else
+            log "Movie processing failed, trying TV show as fallback..."
+            if process_tv_show "${source_dir}"; then
+                log "Successfully processed as TV show"
+                success=true
+                success_type="show"
+            fi
         fi
     fi
 
