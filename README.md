@@ -11,6 +11,7 @@ A robust solution for automatically processing downloaded media files from Trans
 - [Homebrew](https://brew.sh/) (for installing dependencies)
 - Command line tools:
   - yq (`brew install yq`)
+  - jq (`brew install yq`)
   - curl (usually pre-installed on macOS)
   - netcat (`brew install netcat`)
 
@@ -19,7 +20,7 @@ A robust solution for automatically processing downloaded media files from Trans
 1. Clone this repository or download the scripts to your preferred location:
    ```bash
    git clone <repository-url>
-   cd transmission-plex-manager
+   cd transmission-filebot
    ```
 
 2. Create the necessary configuration directory:
