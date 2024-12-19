@@ -250,8 +250,7 @@ process_tv_show() {
         --output "${PLEX_MEDIA_PATH}" \
         -r \
         --conflict auto \
-        -strict \
-        --min-similarity 0.9 \
+        -non-strict \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1
@@ -266,8 +265,6 @@ process_movie() {
         --output "${PLEX_MEDIA_PATH}" \
         -r \
         --conflict auto \
-        -strict \
-        --min-similarity 0.9 \
         --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
         --action move \
         >> "${LOG_FILE}" 2>&1
