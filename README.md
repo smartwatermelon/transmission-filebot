@@ -11,7 +11,7 @@ A robust solution for automatically processing downloaded media files from Trans
 - [Homebrew](https://brew.sh/) (for installing dependencies)
 - Command line tools:
   - yq (`brew install yq`)
-  - jq (`brew install yq`)
+  - jq (`brew install jq`)
   - curl (usually pre-installed on macOS)
   - netcat (`brew install netcat`)
 
