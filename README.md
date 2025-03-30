@@ -18,22 +18,26 @@ A robust solution for automatically processing downloaded media files from Trans
 ## Installation
 
 1. Clone this repository or download the scripts to your preferred location:
+
    ```bash
    git clone <repository-url>
    cd transmission-filebot
    ```
 
 2. Create the necessary configuration directory:
+
    ```bash
    mkdir -p ~/.config/transmission-done
    ```
 
 3. Copy the sample config file:
+
    ```bash
    cp config.yml ~/.config/transmission-done/
    ```
 
 4. Generate your Plex token:
+
    ```bash
    ./plex-token.sh
    ```
@@ -42,6 +46,7 @@ A robust solution for automatically processing downloaded media files from Trans
 ## Configuration
 
 1. Edit `~/.config/transmission-done/config.yml` with your settings:
+
    ```yaml
    paths:
      default_home: /Users/yourusername
@@ -62,6 +67,7 @@ A robust solution for automatically processing downloaded media files from Trans
    - Enter the full path to `transmission-done.sh`
 
 3. Ensure the script is executable:
+
    ```bash
    chmod +x transmission-done.sh
    chmod +x plex-token.sh
@@ -107,6 +113,7 @@ This is why the script:
 - Sources all paths from the config file rather than environment variables
 
 If you need to debug environment issues:
+
 ```bash
 # Add this near the start of the script
 env > /tmp/transmission-env.log
@@ -133,16 +140,19 @@ env > /tmp/transmission-env.log
 ### Debugging
 
 1. Check the logs:
+
    ```bash
    tail -f ~/.filebot/logs/transmission-processing.log
    ```
 
 2. Run the test suite:
+
    ```bash
    TEST_MODE=true ./transmission-done.sh
    ```
 
 3. Verify Plex connectivity:
+
    ```bash
    curl -H "X-Plex-Token: your_token" http://localhost:32400/identity
    ```
