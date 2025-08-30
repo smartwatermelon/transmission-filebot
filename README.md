@@ -41,6 +41,7 @@ A robust solution for automatically processing downloaded media files from Trans
    ```bash
    ./plex-token.sh
    ```
+
    Follow the prompts to enter your Plex credentials. The script will provide you with a token to add to your config.yml.
 
 ## Configuration
@@ -108,6 +109,7 @@ When Transmission runs the script, it does so with a limited environment that di
    - No `HOME` variable by default
 
 This is why the script:
+
 - Explicitly sets `PATH` to include `/usr/local/bin`
 - Uses a configurable `default_home` in config.yml
 - Sources all paths from the config file rather than environment variables
