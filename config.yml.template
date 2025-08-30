@@ -1,0 +1,11 @@
+---
+version: 1.0
+paths:
+  default_home: /Users/YOUR_USERNAME  # Default home directory if $HOME not set
+plex:
+  server: http://localhost:32400    # Plex server URL
+  token: YOUR_PLEX_TOKEN      # Your Plex authentication token
+  media_path: YOUR_PLEX_MEDIA_PATH  # Root path for media library
+logging:
+  file: .filebot/logs/transmission-processing.log  # Relative to home dir
+  max_size: 10485760  # Max log size in bytes (10MB)
