@@ -172,6 +172,68 @@ verify_plex_connection() {
   return 0
 }
 
+# Check for required and optional dependencies
+check_dependencies() {
+  local missing_required=()
+  local missing_optional=()
+  local has_errors=false
+
+  # Required dependencies
+  local required_deps=("yq" "curl" "lsof" "find" "stat")
+
+  for cmd in "${required_deps[@]}"; do
+    if ! command -v "${cmd}" &>/dev/null; then
+      missing_required+=("${cmd}")
+      has_errors=true
+    fi
+  done
+
+  # Check for FileBot (special case, might be in different locations)
+  if ! command -v filebot &>/dev/null && [[ ! -x "/usr/local/bin/filebot" ]]; then
+    missing_required+=("filebot")
+    has_errors=true
+  fi
+
+  # Optional dependencies (for enhanced features)
+  local optional_deps=("terminal-notifier" "osascript")
+
+  for cmd in "${optional_deps[@]}"; do
+    if ! command -v "${cmd}" &>/dev/null; then
+      missing_optional+=("${cmd}")
+    fi
+  done
+
+  # Report missing required dependencies
+  if [[ ${has_errors} == true ]]; then
+    log "Error: Missing required dependencies:"
+    for cmd in "${missing_required[@]}"; do
+      log "  - ${cmd}"
+    done
+
+    # Provide installation instructions
+    log ""
+    log "Installation instructions:"
+    log "  yq: brew install yq"
+    log "  filebot: https://www.filebot.net/"
+    log "  lsof, curl, find, stat: Should be pre-installed on macOS"
+
+    return 1
+  fi
+
+  # Report missing optional dependencies
+  if [[ ${#missing_optional[@]} -gt 0 ]]; then
+    log "Note: Missing optional dependencies (reduced functionality):"
+    for cmd in "${missing_optional[@]}"; do
+      log "  - ${cmd}"
+    done
+    log "  terminal-notifier: brew install terminal-notifier (for notifications)"
+    log "  osascript: Should be available on macOS (for folder picker)"
+  fi
+
+  log "Dependency check passed"
+  return 0
+}
+
 get_plex_library_sections() {
   if [[ "${TEST_MODE}" == "true" ]]; then
     log "TEST: Would get Plex library sections"
@@ -1201,6 +1263,12 @@ initialize() {
   # Read config
   if ! read_config; then
     printf 'Error: Failed to read configuration\n' >&2
+    return 1
+  fi
+
+  # Check dependencies
+  if ! check_dependencies; then
+    printf 'Error: Missing required dependencies\n' >&2
     return 1
   fi
 

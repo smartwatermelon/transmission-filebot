@@ -21,6 +21,5 @@ logs/
 *.swp
 *.swo
 
-# Test files
-test/
+# Temporary test files
 *.test
