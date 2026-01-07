@@ -16,16 +16,12 @@ check_dependencies() {
     missing_deps+=("yq")
   fi
 
-  if ! command -v xq &>/dev/null; then
-    missing_deps+=("xq (from yq package)")
+  if ! command -v xmlstarlet &>/dev/null; then
+    missing_deps+=("xmlstarlet")
   fi
 
   if ! command -v curl &>/dev/null; then
     missing_deps+=("curl")
-  fi
-
-  if ! command -v jq &>/dev/null; then
-    missing_deps+=("jq")
   fi
 
   if [[ ${#missing_deps[@]} -gt 0 ]]; then
@@ -34,8 +30,7 @@ check_dependencies() {
       printf '  - %s\n' "${dep}" >&2
     done
     printf '\nInstallation:\n' >&2
-    printf '  brew install yq jq\n' >&2
-    printf '  (yq package includes xq for XML parsing)\n' >&2
+    printf '  brew install yq xmlstarlet\n' >&2
     printf '  curl should be pre-installed on macOS\n' >&2
     return 1
   fi
@@ -121,25 +116,28 @@ get_plex_library_info() {
     return 1
   fi
 
-  # Parse XML with xq and display library sections
-  # Handle both single object and array responses from Plex API
-  local sections
-  if ! sections=$(echo "${response}" | xq -r '
-    (.MediaContainer.Directory // []) |
-    if type == "array" then .[] else . end |
-    "\(.["@key"]) \(.["@type"]) \(.["@title"])"
-  ' 2>/dev/null); then
+  # Parse XML with xmlstarlet
+  local section_count
+  if ! section_count=$(echo "${response}" | xmlstarlet sel -t -v "count(//Directory)" 2>/dev/null); then
     printf 'Warning: Could not parse library sections XML\n' >&2
     return 1
   fi
 
-  if [[ -z "${sections}" ]]; then
+  if [[ -z "${section_count}" ]] || [[ "${section_count}" -eq 0 ]]; then
     printf 'Warning: No library sections found\n' >&2
     return 1
   fi
 
   printf 'Available library sections:\n'
-  echo "${sections}" | while read -r id type title; do
+
+  # Iterate through each Directory element
+  local i
+  for ((i = 1; i <= section_count; i++)); do
+    local id type title
+    id=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@key" 2>/dev/null)
+    type=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@type" 2>/dev/null)
+    title=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@title" 2>/dev/null)
+
     [[ -z "${id}" ]] && continue
 
     # Get location for this section
@@ -148,13 +146,7 @@ get_plex_library_info() {
 
     if [[ -n "${section_detail}" ]]; then
       # Extract path from first Location element
-      location=$(echo "${section_detail}" | xq -r '
-        (.MediaContainer.Directory // []) |
-        if type == "array" then .[0] else . end |
-        (.Location // []) |
-        if type == "array" then .[0] else . end |
-        .["@path"]? // empty
-      ' 2>/dev/null)
+      location=$(echo "${section_detail}" | xmlstarlet sel -t -v "//Location[1]/@path" 2>/dev/null)
 
       if [[ -n "${location}" ]]; then
         printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}"
