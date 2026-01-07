@@ -102,12 +102,13 @@ assert_dir_exists() {
 }
 
 # Helper function to assert exit code
+# BATS stores exit code in $status when using 'run' command
 assert_success() {
-  [[ "$?" -eq 0 ]] || return 1
+  [[ "${status:-$?}" -eq 0 ]] || return 1
 }
 
 assert_failure() {
-  [[ "$?" -ne 0 ]] || return 1
+  [[ "${status:-$?}" -ne 0 ]] || return 1
 }
 
 # Helper function to assert output contains string

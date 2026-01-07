@@ -704,11 +704,11 @@ detect_media_type_heuristic() {
   fi
 
   # Count TV show patterns: S01E01, s1e1, 1x01, season, episode (case insensitive)
-  tv_pattern_count=$(echo "${media_files}" | grep -icE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+|season|episode' || echo "0")
+  tv_pattern_count=$(echo "${media_files}" | grep -icE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+|season|episode') || tv_pattern_count=0
 
   # Count movie patterns: year 1900-2099, but NOT followed by 'p' or 'i' (to exclude 2160p, 1080i)
   # First grep finds years, second filters out resolution markers, then count
-  movie_pattern_count=$(echo "${media_files}" | grep -iE '\b(19|20)[0-9]{2}\b' | grep -vicE '(19|20)[0-9]{2}[pi]' || echo "0")
+  movie_pattern_count=$(echo "${media_files}" | grep -iE '\b(19|20)[0-9]{2}\b' | grep -vicE '(19|20)[0-9]{2}[pi]') || movie_pattern_count=0
 
   log "Pattern counts - TV: ${tv_pattern_count:-0}, Movie: ${movie_pattern_count:-0}"
 
