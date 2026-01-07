@@ -98,7 +98,6 @@ jobs:
   bats-tests:
     name: BATS Unit Tests
     runs-on: macos-latest
-    if: false  # Disabled until Phase 8 completion
 
     steps:
       - name: Checkout code
@@ -132,7 +131,7 @@ jobs:
   summary:
     name: Test Summary
     runs-on: macos-latest
-    needs: [lint, test]
+    needs: [lint, test, bats-tests]
     if: always()
 
     steps:
@@ -153,9 +152,15 @@ jobs:
             echo "❌ Inline Tests: FAILED" >> $GITHUB_STEP_SUMMARY
           fi
 
+          if [ "${{ needs.bats-tests.result }}" == "success" ]; then
+            echo "✅ BATS Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ BATS Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "📊 **Overall Status**: ${{ (needs.lint.result == 'success' && needs.test.result == 'success') && 'PASSED' || 'FAILED' }}" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Overall Status**: ${{ (needs.lint.result == 'success' && needs.test.result == 'success' && needs.bats-tests.result == 'success') && 'PASSED' || 'FAILED' }}" >> $GITHUB_STEP_SUMMARY
 
       - name: Fail if any job failed
-        if: needs.lint.result != 'success' || needs.test.result != 'success'
+        if: needs.lint.result != 'success' || needs.test.result != 'success' || needs.bats-tests.result != 'success'
         run: exit 1
