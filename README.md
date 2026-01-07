@@ -187,7 +187,7 @@ env > /tmp/transmission-env.log
 2. Run the test suite:
 
    ```bash
-   TEST_MODE=true ./transmission-done.sh
+   ./run_tests.sh
    ```
 
 3. Verify Plex connectivity:
@@ -195,6 +195,101 @@ env > /tmp/transmission-env.log
    ```bash
    curl -H "X-Plex-Token: your_token" http://localhost:32400/identity
    ```
+
+## Testing
+
+This project uses [BATS (Bash Automated Testing System)](https://github.com/bats-core/bats-core) for comprehensive testing.
+
+### Prerequisites
+
+Install BATS and related tools:
+
+```bash
+brew install bats-core bats-support bats-assert
+```
+
+### Running Tests
+
+Run all tests:
+
+```bash
+./run_tests.sh
+```
+
+Run only unit tests:
+
+```bash
+bats test/unit/*.bats
+```
+
+Run only integration tests:
+
+```bash
+bats test/integration/*.bats
+```
+
+Run a specific test file:
+
+```bash
+bats test/unit/test_mode_detection.bats
+```
+
+Run tests with verbose output:
+
+```bash
+bats -t test/unit/test_mode_detection.bats
+```
+
+### Test Structure
+
+#### Unit Tests (`test/unit/`)
+
+Test individual functions in isolation:
+
+- `test_mode_detection.bats` - Invocation mode detection (automated vs manual)
+- `test_type_detection.bats` - Media type heuristics (TV vs movie)
+- `test_plex_api.bats` - Plex API functions and library scans
+- `test_filebot.bats` - FileBot processing and fallback chains
+- `test_error_logging.bats` - Error analysis and reporting
+- `test_file_safety.bats` - File readiness and safety checks
+
+#### Integration Tests (`test/integration/`)
+
+Test complete end-to-end workflows:
+
+- `test_tv_workflow.bats` - Complete TV show processing workflow
+- `test_movie_workflow.bats` - Complete movie processing workflow
+- `test_manual_mode.bats` - Manual invocation mode (user-initiated)
+
+### Test Coverage
+
+- **100+ tests** covering all major functionality
+- Unit tests verify individual components
+- Integration tests verify complete workflows
+- All tests run in TEST_MODE to avoid side effects
+- Comprehensive coverage of error conditions and edge cases
+
+### Writing Tests
+
+Tests follow BATS conventions:
+
+```bash
+@test "description of what is being tested" {
+  # Setup
+  export TEST_MODE=true
+  local test_dir="${TEST_TEMP_DIR}/test"
+  mkdir -p "${test_dir}"
+
+  # Execute
+  run function_to_test "${test_dir}"
+
+  # Assert
+  assert_success
+  assert_equal "expected" "${output}"
+}
+```
+
+See existing tests in `test/unit/` and `test/integration/` for more examples.
 
 ## Project History
 
