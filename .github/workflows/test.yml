@@ -37,7 +37,24 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install yq
+          brew install bash yq
+
+      - name: Detect Bash location and verify version
+        run: |
+          echo "System bash: $(bash --version | head -1)"
+
+          # Detect Homebrew Bash location (Apple Silicon vs Intel)
+          if [ -f /opt/homebrew/bin/bash ]; then
+            BASH_PATH="/opt/homebrew/bin/bash"
+          elif [ -f /usr/local/bin/bash ]; then
+            BASH_PATH="/usr/local/bin/bash"
+          else
+            echo "❌ Homebrew Bash not found"
+            exit 1
+          fi
+
+          echo "Homebrew bash: $($BASH_PATH --version | head -1)"
+          echo "BASH_PATH=$BASH_PATH" >> $GITHUB_ENV
 
       - name: Make script executable
         run: chmod +x transmission-done.sh
@@ -55,8 +72,8 @@ jobs:
           # Create test directories
           mkdir -p "${PLEX_MEDIA_PATH}"
 
-          # Run tests and capture output
-          ./transmission-done.sh 2>&1 | tee test_output.log
+          # Run tests with Bash 5 and capture output
+          $BASH_PATH ./transmission-done.sh 2>&1 | tee test_output.log
 
           # Check test results
           if grep -q "Failed tests: 0" test_output.log; then
