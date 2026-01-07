@@ -290,7 +290,7 @@ run_filebot() {
 
     # Preview mode (--action test) always succeeds with test output
     if [[ "$*" == *"--action test"* ]]; then
-      echo "TEST: [RENAME] from [file.mkv] to [processed.mkv]"
+      echo "[TEST] [RENAME] from [file.mkv] to [processed.mkv]"
       return 0
     fi
 
@@ -630,7 +630,7 @@ preview_filebot_changes() {
 
   # Count files to process
   local file_count
-  file_count=$(echo "${preview_output}" | grep -c "TEST:" || echo "0")
+  file_count=$(echo "${preview_output}" | grep -c "\[TEST\]" || echo "0")
 
   if [[ ${file_count} -eq 0 ]]; then
     log "Warning: Preview shows no files to rename"
@@ -638,7 +638,7 @@ preview_filebot_changes() {
   fi
 
   log "Preview: ${file_count} files to process"
-  echo "${preview_output}" | grep "TEST:" | tee -a "${LOG_FILE}"
+  echo "${preview_output}" | grep "\[TEST\]" | tee -a "${LOG_FILE}"
 
   # Store output for confirmation step
   LAST_PREVIEW_OUTPUT="${preview_output}"
@@ -917,7 +917,7 @@ process_media() {
 
   # Step 4: Confirm changes with user (manual mode only)
   local file_count
-  file_count=$(echo "${LAST_PREVIEW_OUTPUT}" | grep -c "TEST:" || echo "0")
+  file_count=$(echo "${LAST_PREVIEW_OUTPUT}" | grep -c "\[TEST\]" || echo "0")
   if ! confirm_changes "${file_count} files ready to process"; then
     log "User cancelled processing"
     return 1
