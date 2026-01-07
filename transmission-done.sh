@@ -1350,6 +1350,9 @@ fi
 # Entry point logic
 if [[ "${TEST_MODE}" == "true" ]] && [[ "${TEST_RUNNER}" == "false" ]]; then
   run_tests
+elif [[ "${TEST_RUNNER}" == "true" ]]; then
+  # BATS mode - functions loaded, don't run main
+  :
 else
   main "$@"
 fi
