@@ -485,6 +485,213 @@ confirm_changes() {
   esac
 }
 
+# Detect media type using filename heuristics
+detect_media_type_heuristic() {
+  local source_dir="$1"
+  local tv_pattern_count=0
+  local movie_pattern_count=0
+
+  log "Analyzing media type using filename patterns"
+
+  # Find all media files
+  local media_files
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${media_files}" ]]; then
+    log "No media files found for type detection"
+    echo "unknown"
+    return 1
+  fi
+
+  # Count TV show patterns: S01E01, s1e1, 1x01, season, episode (case insensitive)
+  tv_pattern_count=$(echo "${media_files}" | grep -icE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+|season|episode' || echo "0")
+
+  # Count movie patterns: year 1900-2099, but NOT followed by 'p' or 'i' (to exclude 2160p, 1080i)
+  # First grep finds years, second filters out resolution markers, then count
+  movie_pattern_count=$(echo "${media_files}" | grep -iE '\b(19|20)[0-9]{2}\b' | grep -vicE '(19|20)[0-9]{2}[pi]' || echo "0")
+
+  log "Pattern counts - TV: ${tv_pattern_count:-0}, Movie: ${movie_pattern_count:-0}"
+
+  # Determine type based on pattern prevalence (with safe defaults)
+  if [[ ${tv_pattern_count:-0} -gt 0 ]] && [[ ${tv_pattern_count:-0} -ge ${movie_pattern_count:-0} ]]; then
+    echo "tv"
+    return 0
+  elif [[ ${movie_pattern_count:-0} -gt 0 ]]; then
+    echo "movie"
+    return 0
+  else
+    log "Unable to determine type from patterns"
+    echo "unknown"
+    return 1
+  fi
+}
+
+# Process media with FileBot auto-detection (no --db flag)
+process_media_with_autodetect() {
+  local source_dir="$1"
+
+  log "Attempting FileBot auto-detection (no database specified)"
+
+  run_filebot -rename "${source_dir}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    -non-strict \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Process media with a specific database
+process_with_database() {
+  local source_dir="$1"
+  local database="$2"
+
+  log "Attempting FileBot processing with database: ${database}"
+
+  run_filebot -rename "${source_dir}" \
+    --db "${database}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    -non-strict \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Process with xattr cached metadata as last resort
+process_with_xattr() {
+  local source_dir="$1"
+
+  log "Attempting FileBot processing with xattr cache (last resort)"
+
+  # FileBot can use extended attributes cached from previous runs
+  run_filebot -rename "${source_dir}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Try TV show database chain
+try_tv_databases() {
+  local source_dir="$1"
+
+  log "Trying TV database fallback chain"
+
+  # Chain: TheTVDB → TheMovieDB::TV → AniDB
+  local databases=("TheTVDB" "TheMovieDB::TV" "AniDB")
+
+  for db in "${databases[@]}"; do
+    log "Trying TV database: ${db}"
+    if process_with_database "${source_dir}" "${db}"; then
+      log "Success with TV database: ${db}"
+      return 0
+    fi
+    log "Failed with TV database: ${db}"
+  done
+
+  return 1
+}
+
+# Try movie database chain
+try_movie_databases() {
+  local source_dir="$1"
+
+  log "Trying movie database fallback chain"
+
+  # Chain: TheMovieDB → OMDb
+  local databases=("TheMovieDB" "OMDb")
+
+  for db in "${databases[@]}"; do
+    log "Trying movie database: ${db}"
+    if process_with_database "${source_dir}" "${db}"; then
+      log "Success with movie database: ${db}"
+      return 0
+    fi
+    log "Failed with movie database: ${db}"
+  done
+
+  return 1
+}
+
+# Process media with comprehensive fallback strategy
+process_media_with_fallback() {
+  local source_dir="$1"
+  local detected_type=""
+
+  # Validate source directory exists
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Error: Source directory does not exist: ${source_dir}"
+    return 1
+  fi
+
+  log "Starting comprehensive fallback processing"
+
+  # Strategy 1: Auto-detection (let FileBot decide)
+  log "Strategy 1: FileBot auto-detection"
+  if process_media_with_autodetect "${source_dir}"; then
+    log "Success: FileBot auto-detection"
+    return 0
+  fi
+  log "Failed: FileBot auto-detection"
+
+  # Strategy 2: Heuristic detection + database chains
+  log "Strategy 2: Heuristic detection with database fallback"
+  detected_type=$(detect_media_type_heuristic "${source_dir}")
+
+  if [[ "${detected_type}" == "tv" ]]; then
+    log "Detected as TV show, trying TV database chain"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database chain"
+      return 0
+    fi
+    log "Failed: TV database chain, trying movie databases as fallback"
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database fallback"
+      return 0
+    fi
+  elif [[ "${detected_type}" == "movie" ]]; then
+    log "Detected as movie, trying movie database chain"
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database chain"
+      return 0
+    fi
+    log "Failed: Movie database chain, trying TV databases as fallback"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database fallback"
+      return 0
+    fi
+  else
+    log "Unknown type, trying both TV and movie databases"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database chain (unknown type)"
+      return 0
+    fi
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database chain (unknown type)"
+      return 0
+    fi
+  fi
+
+  # Strategy 3: xattr cache (last resort)
+  log "Strategy 3: xattr cache (last resort)"
+  if process_with_xattr "${source_dir}"; then
+    log "Success: xattr cache"
+    return 0
+  fi
+  log "Failed: xattr cache"
+
+  log "Error: All fallback strategies exhausted"
+  return 1
+}
+
 process_media() {
   local source_dir="$1"
   local success=false
