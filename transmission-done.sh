@@ -286,11 +286,11 @@ process_media() {
   local is_likely_movie=false
 
   # Match TV patterns: S01E01, s1e1, 1x01 (case insensitive)
-  if find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+' >/dev/null; then
+  if find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) | grep -iE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+' >/dev/null; then
     is_likely_tv=true
     log "Media appears to be a TV show based on filename pattern"
   # Match year 1900-2099 not followed by 'p' or 'i' (avoids matching resolution like 1080p)
-  elif find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE '(19|20)[0-9]{2}[^ip]' >/dev/null; then
+  elif find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) | grep -iE '(19|20)[0-9]{2}[^ip]' >/dev/null; then
     is_likely_movie=true
     log "Media appears to be a movie based on filename pattern"
   fi
