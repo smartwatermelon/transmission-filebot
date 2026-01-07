@@ -13,9 +13,10 @@ A robust solution for automatically processing downloaded media files from Trans
 - [Homebrew](https://brew.sh/) (for installing dependencies)
 - Command line tools:
   - yq (`brew install yq`)
-  - jq (`brew install jq`)
+  - xmlstarlet (`brew install xmlstarlet`)
   - curl (usually pre-installed on macOS)
-  - netcat (`brew install netcat`)
+
+> **Note**: The setup wizard (`plex-token.sh`) can automatically install missing dependencies with your permission.
 
 ## Installation
 
@@ -26,55 +27,51 @@ A robust solution for automatically processing downloaded media files from Trans
    cd transmission-filebot
    ```
 
-2. Create the necessary configuration directory:
-
-   ```bash
-   mkdir -p ~/.config/transmission-done
-   ```
-
-3. Copy the sample config file:
-
-   ```bash
-   cp config.yml ~/.config/transmission-done/
-   ```
-
-4. Generate your Plex token:
+2. Run the interactive setup wizard:
 
    ```bash
    ./plex-token.sh
    ```
 
-   Follow the prompts to enter your Plex credentials. The script will provide you with a token to add to your config.yml.
+   The wizard will:
+   - Check for required dependencies and offer to install them
+   - Validate your Plex server is reachable
+   - Guide you through obtaining a Plex authentication token
+   - Display your Plex library sections to help choose the media path
+   - Generate a complete configuration file at `~/.config/transmission-done/config.yml`
+   - Back up any existing configuration with a timestamp
 
-## Configuration
-
-1. Edit `~/.config/transmission-done/config.yml` with your settings:
-
-   ```yaml
-   paths:
-     default_home: /Users/yourusername
-   plex:
-     server: http://localhost:32400
-     token: your_plex_token_here
-     media_path: /path/to/your/plex/media
-   logging:
-     file: .filebot/logs/transmission-processing.log
-     max_size: 10485760  # 10MB in bytes
-   ```
-
-2. Configure Transmission to run the script:
-   - Open Transmission
-   - Go to Preferences (⌘,)
-   - Navigate to the "Downloading" tab
-   - Check "Run script when download completes"
-   - Enter the full path to `transmission-done.sh`
-
-3. Ensure the script is executable:
+3. Make the main script executable:
 
    ```bash
    chmod +x transmission-done.sh
-   chmod +x plex-token.sh
    ```
+
+## Configuration
+
+The setup wizard creates `~/.config/transmission-done/config.yml` automatically. If you need to modify it later:
+
+```yaml
+paths:
+  default_home: /Users/yourusername
+plex:
+  server: http://localhost:32400
+  token: your_plex_token_here
+  media_path: /path/to/your/plex/media
+logging:
+  file: .filebot/logs/transmission-processing.log
+  max_size: 10485760  # 10MB in bytes
+```
+
+### Transmission Integration
+
+Configure Transmission to run the script automatically:
+
+- Open Transmission
+- Go to Preferences (⌘,)
+- Navigate to the "Downloading" tab
+- Check "Run script when download completes"
+- Enter the full path to `transmission-done.sh`
 
 ## How It Works
 
@@ -263,11 +260,13 @@ Test complete end-to-end workflows:
 
 ### Test Coverage
 
-- **100+ tests** covering all major functionality
-- Unit tests verify individual components
-- Integration tests verify complete workflows
+- **110 comprehensive tests** covering all major functionality
+- **63 unit tests** verify individual components in isolation
+- **47 integration tests** verify complete end-to-end workflows
 - All tests run in TEST_MODE to avoid side effects
 - Comprehensive coverage of error conditions and edge cases
+- Mock implementations for FileBot and Plex API calls
+- Test helpers for common assertions and setup
 
 ### Writing Tests
 
@@ -300,10 +299,17 @@ This project began as a simple "done-cleanup" script that removed unwanted files
 - **Plex Integration**: Implemented automatic library updates
 - **Robust Error Handling**: Added retry logic and comprehensive logging
 - **Configuration Management**: Moved from hardcoded values to YAML configuration
-- **Test Suite**: Added comprehensive testing capabilities
-- **Token Management**: Added secure Plex token generation utility
+- **Test Suite (2026-01)**: Comprehensive BATS test infrastructure with 110 tests
+  - 63 unit tests for individual functions
+  - 47 integration tests for complete workflows
+  - Continuous integration with GitHub Actions
+- **Setup Wizard (2026-01)**: Interactive `plex-token.sh` configuration tool
+  - Automatic dependency installation
+  - Plex server validation
+  - Complete config file generation
+  - Library introspection with proper XML parsing
 
-The current version represents a complete rewrite with proper error handling, logging, configuration management, and extensive testing capabilities.
+The current version is a comprehensive media automation solution with proper error handling, logging, configuration management, and extensive testing capabilities.
 
 ## Contributing
 
