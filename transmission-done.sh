@@ -17,7 +17,7 @@ BASH_SOURCE_REALPATH="$(realpath "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE_REALPATH}")"
 readonly SCRIPT_DIR
 readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
-readonly USER_CONFIG="${HOME:-/Users/andrewrich}/.config/transmission-done/config.yml"
+readonly USER_CONFIG="${HOME}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v) # silent, fail on error, 10 second timeout, verbose
 
 # Config vars
