@@ -27,6 +27,12 @@ PLEX_MEDIA_PATH="${PLEX_MEDIA_PATH:-}"
 LOG_FILE=""
 MAX_LOG_SIZE=0
 
+# Invocation mode tracking
+INVOCATION_MODE=""
+
+# Preview output storage
+LAST_PREVIEW_OUTPUT=""
+
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
@@ -166,6 +172,68 @@ verify_plex_connection() {
   return 0
 }
 
+# Check for required and optional dependencies
+check_dependencies() {
+  local missing_required=()
+  local missing_optional=()
+  local has_errors=false
+
+  # Required dependencies
+  local required_deps=("yq" "curl" "lsof" "find" "stat")
+
+  for cmd in "${required_deps[@]}"; do
+    if ! command -v "${cmd}" &>/dev/null; then
+      missing_required+=("${cmd}")
+      has_errors=true
+    fi
+  done
+
+  # Check for FileBot (special case, might be in different locations)
+  if ! command -v filebot &>/dev/null && [[ ! -x "/usr/local/bin/filebot" ]]; then
+    missing_required+=("filebot")
+    has_errors=true
+  fi
+
+  # Optional dependencies (for enhanced features)
+  local optional_deps=("terminal-notifier" "osascript")
+
+  for cmd in "${optional_deps[@]}"; do
+    if ! command -v "${cmd}" &>/dev/null; then
+      missing_optional+=("${cmd}")
+    fi
+  done
+
+  # Report missing required dependencies
+  if [[ ${has_errors} == true ]]; then
+    log "Error: Missing required dependencies:"
+    for cmd in "${missing_required[@]}"; do
+      log "  - ${cmd}"
+    done
+
+    # Provide installation instructions
+    log ""
+    log "Installation instructions:"
+    log "  yq: brew install yq"
+    log "  filebot: https://www.filebot.net/"
+    log "  lsof, curl, find, stat: Should be pre-installed on macOS"
+
+    return 1
+  fi
+
+  # Report missing optional dependencies
+  if [[ ${#missing_optional[@]} -gt 0 ]]; then
+    log "Note: Missing optional dependencies (reduced functionality):"
+    for cmd in "${missing_optional[@]}"; do
+      log "  - ${cmd}"
+    done
+    log "  terminal-notifier: brew install terminal-notifier (for notifications)"
+    log "  osascript: Should be available on macOS (for folder picker)"
+  fi
+
+  log "Dependency check passed"
+  return 0
+}
+
 get_plex_library_sections() {
   if [[ "${TEST_MODE}" == "true" ]]; then
     log "TEST: Would get Plex library sections"
@@ -220,17 +288,143 @@ run_filebot() {
       return 0
     fi
 
+    # Preview mode (--action test) always succeeds with test output
+    if [[ "$*" == *"--action test"* ]]; then
+      echo "[TEST] [RENAME] from [file.mkv] to [processed.mkv]"
+      return 0
+    fi
+
+    # Auto-detect mode (no --db flag) for test directories
+    if [[ "$*" != *"--db"* ]]; then
+      if [[ "$*" == *"/test/The.Show.S01E01"* || "$*" == *"/test/The.Movie.2024"* ]]; then
+        echo "Processed files to output directory"
+        return 0
+      fi
+    fi
+
+    # Database-specific processing for test directories
     if [[ "$*" == *"TheTVDB"* && "$*" == *"/test/The.Show.S01E01"* ]]; then
       return 0
     elif [[ "$*" == *"TheMovieDB"* && "$*" == *"/test/The.Movie.2024"* ]]; then
       return 0
     fi
+
     return 1
   else
     local FILEBOT
     FILEBOT="$(command -v filebot 2>/dev/null || echo "/usr/local/bin/filebot")"
     "${FILEBOT}" "$@"
   fi
+}
+
+# Log FileBot error with structured information and actionable suggestions
+log_filebot_error() {
+  local exit_code="$1"
+  local output="$2"
+  local source_dir="$3"
+  local database="${4:-auto-detect}"
+
+  log "=== FILEBOT ERROR REPORT ==="
+  log "Exit Code: ${exit_code}"
+  log "Database: ${database}"
+  log "Source Directory: ${source_dir}"
+
+  # List all files in source directory
+  log "Files in source directory:"
+  if [[ -d "${source_dir}" ]]; then
+    local file_list
+    file_list=$(find "${source_dir}" -type f 2>/dev/null || echo "Unable to list files")
+    if [[ -n "${file_list}" ]]; then
+      echo "${file_list}" | while IFS= read -r file; do
+        log "  - $(basename "${file}")"
+      done
+    else
+      log "  (no files found or unable to list)"
+    fi
+  else
+    log "  (directory does not exist)"
+  fi
+
+  # Analyze error patterns in output
+  log "Error Analysis:"
+
+  # Connection errors
+  if echo "${output}" | grep -iq "connection\|network\|timeout\|unreachable"; then
+    log "  ⚠ CONNECTION: Network/database connection issue detected"
+    log "    Suggestions:"
+    log "    - Check internet connectivity"
+    log "    - Verify database service is online (TheTVDB, TheMovieDB, etc.)"
+    log "    - Try again in a few minutes"
+  fi
+
+  # Permission errors
+  if echo "${output}" | grep -iq "permission\|denied\|cannot write\|read-only"; then
+    log "  ⚠ PERMISSION: File/directory permission issue detected"
+    log "    Suggestions:"
+    log "    - Check write permissions on: ${PLEX_MEDIA_PATH}"
+    log "    - Check read permissions on: ${source_dir}"
+    log "    - Verify user has access to both directories"
+  fi
+
+  # License errors
+  if echo "${output}" | grep -iq "license\|unregistered\|trial\|activation"; then
+    log "  ⚠ LICENSE: FileBot license issue detected"
+    log "    Suggestions:"
+    log "    - Verify FileBot is properly licensed"
+    log "    - Check license file location: ~/.filebot/license.txt"
+    log "    - Run: filebot --license to check status"
+  fi
+
+  # Identification errors
+  if echo "${output}" | grep -iq "unable to identify\|no match\|failed to fetch\|no results"; then
+    log "  ⚠ IDENTIFICATION: Media identification failed"
+    log "    Suggestions:"
+    log "    - Check filename follows naming conventions"
+    log "    - For TV: Include S##E## or ##x## pattern"
+    log "    - For Movies: Include year (YYYY)"
+    log "    - Try different database with --db flag"
+    log "    - Consider manual lookup on TVDB/TMDB"
+  fi
+
+  # Disk space
+  if echo "${output}" | grep -iq "no space\|disk full\|quota exceeded"; then
+    log "  ⚠ DISK SPACE: Insufficient disk space"
+    log "    Suggestions:"
+    log "    - Check available space: df -h ${PLEX_MEDIA_PATH}"
+    log "    - Free up space in destination"
+  fi
+
+  # Unknown error
+  if ! echo "${output}" | grep -iq "connection\|network\|timeout\|permission\|license\|identify\|space"; then
+    log "  ⚠ UNKNOWN: Error type not recognized"
+    log "    Suggestions:"
+    log "    - Review full FileBot output in log file"
+    log "    - Check FileBot documentation"
+    log "    - Verify FileBot installation: filebot --version"
+  fi
+
+  # Log excerpt of output (first/last few lines)
+  log "FileBot Output (excerpt):"
+  local line_count
+  line_count=$(echo "${output}" | wc -l)
+  if [[ ${line_count} -gt 20 ]]; then
+    log "  (First 10 lines)"
+    echo "${output}" | head -10 | while IFS= read -r line; do
+      log "  ${line}"
+    done
+    log "  ..."
+    log "  (Last 10 lines)"
+    echo "${output}" | tail -10 | while IFS= read -r line; do
+      log "  ${line}"
+    done
+  else
+    echo "${output}" | while IFS= read -r line; do
+      log "  ${line}"
+    done
+  fi
+
+  log "=== END ERROR REPORT ==="
+  return 0
 }
 
 check_disk_space() {
@@ -240,6 +434,134 @@ check_disk_space() {
     log "Error: Insufficient space on target filesystem (need ${required_space}KB)"
     return 1
   fi
+  return 0
+}
+
+# Check if a single file is ready (quick check without sleep)
+check_file_ready_quick() {
+  local file="$1"
+
+  # Check 1: lsof - is file open by Transmission?
+  if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
+    log "File still open by Transmission: ${file}"
+    return 1
+  fi
+
+  # Check 2: .part marker
+  if [[ -f "${file}.part" ]]; then
+    log "Incomplete marker found: ${file}.part"
+    return 1
+  fi
+
+  # Check 3: .incomplete marker
+  if [[ -f "${file}.incomplete" ]]; then
+    log "Incomplete marker found: ${file}.incomplete"
+    return 1
+  fi
+
+  return 0
+}
+
+# Check if all media files in directory are ready to process
+check_files_ready() {
+  local source_dir="$1"
+  local stability_seconds="${2:-10}"
+
+  log "Validating files are ready for processing (${stability_seconds}s stability check)"
+
+  # Find all media files with corrected syntax
+  local media_files
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${media_files}" ]]; then
+    log "Warning: No media files found in ${source_dir}"
+    return 1
+  fi
+
+  # Phase 1: Quick checks and initial sizes
+  local file_count=0
+  declare -A sizes_before
+
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    ((file_count += 1))
+
+    # Quick checks (lsof + markers)
+    if ! check_file_ready_quick "${file}"; then
+      log "File not ready: ${file}"
+      return 1
+    fi
+
+    # Record initial size
+    sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+  done <<<"${media_files}"
+
+  # Phase 2: Sleep once for entire batch
+  log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
+  sleep "${stability_seconds}"
+
+  # Phase 3: Check final sizes
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+
+    local size_after
+    size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+
+    if [[ "${sizes_before[${file}]}" != "${size_after}" ]]; then
+      log "File size changed: ${file} (${sizes_before[${file}]} → ${size_after} bytes)"
+      return 1
+    fi
+
+    log "File ready: ${file} (${size_after} bytes)"
+  done <<<"${media_files}"
+
+  log "All ${file_count} files validated and ready"
+  return 0
+}
+
+# Discover and filter media files (for manual mode)
+discover_and_filter_media_files() {
+  local search_dir="$1"
+  local include_incomplete="${2:-false}"
+
+  log "Discovering media files in ${search_dir}"
+
+  # Find all media files recursively with corrected syntax
+  local all_files
+  all_files=$(find "${search_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${all_files}" ]]; then
+    log "No media files found"
+    return 1
+  fi
+
+  local ready_count=0
+  local incomplete_count=0
+  local ready_files=""
+
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+
+    if check_file_ready_quick "${file}"; then
+      ((ready_count += 1))
+      ready_files="${ready_files}${file}"$'\n'
+    else
+      ((incomplete_count += 1))
+      if [[ "${include_incomplete}" == "false" ]]; then
+        log "Filtered incomplete: ${file}"
+      fi
+    fi
+  done <<<"${all_files}"
+
+  log "Discovery complete: ${ready_count} ready, ${incomplete_count} incomplete"
+
+  if [[ ${ready_count} -eq 0 ]]; then
+    log "Error: No ready files found"
+    return 1
+  fi
+
+  # Output ready files
+  echo -n "${ready_files}"
   return 0
 }
 
@@ -272,72 +594,361 @@ process_movie() {
     >>"${LOG_FILE}" 2>&1
 }
 
-process_media() {
+# Preview FileBot changes with dry-run
+preview_filebot_changes() {
   local source_dir="$1"
-  local success=false
-  local success_type=""
+  local db="${2:-}"
 
-  log "Processing media in ${source_dir}"
+  log "Generating preview of changes"
 
-  check_disk_space || return 1
+  # Build FileBot arguments
+  local filebot_args=(
+    -rename "${source_dir}"
+    --format "{plex}"
+    --output "${PLEX_MEDIA_PATH}"
+    -r
+    --conflict auto
+    -non-strict
+    --action test # DRY-RUN MODE
+  )
 
-  # Try to determine media type first using filename patterns
-  local is_likely_tv=false
-  local is_likely_movie=false
-
-  # Match TV patterns: S01E01, s1e1, 1x01 (case insensitive)
-  if find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+' >/dev/null; then
-    is_likely_tv=true
-    log "Media appears to be a TV show based on filename pattern"
-  # Match year 1900-2099 not followed by 'p' or 'i' (avoids matching resolution like 1080p)
-  elif find "${source_dir}" -type f -iname "*.mkv" -o -iname "*.mp4" | grep -iE '(19|20)[0-9]{2}[^ip]' >/dev/null; then
-    is_likely_movie=true
-    log "Media appears to be a movie based on filename pattern"
+  # Add database if specified
+  if [[ -n "${db}" ]]; then
+    filebot_args+=(--db "${db}")
   fi
 
-  # Process based on likely type first
-  if [[ "${is_likely_tv}" == "true" ]]; then
-    if process_tv_show "${source_dir}"; then
-      log "Successfully processed as TV show"
-      success=true
-      success_type="show"
-    else
-      log "TV show processing failed despite TV pattern match"
-    fi
-  elif [[ "${is_likely_movie}" == "true" ]]; then
-    if process_movie "${source_dir}"; then
-      log "Successfully processed as movie"
-      success=true
-      success_type="movie"
-    else
-      log "Movie processing failed despite movie pattern match"
-    fi
-  else
-    # If no clear pattern, try both but log a warning
-    log "Warning: Unable to determine media type from filename patterns"
+  # Run FileBot in test mode
+  local preview_output preview_exit
+  preview_output=$(run_filebot "${filebot_args[@]}" 2>&1)
+  preview_exit=$?
 
-    if process_movie "${source_dir}"; then
-      log "Successfully processed as movie"
-      success=true
-      success_type="movie"
-    else
-      log "Movie processing failed, trying TV show as fallback..."
-      if process_tv_show "${source_dir}"; then
-        log "Successfully processed as TV show"
-        success=true
-        success_type="show"
-      fi
-    fi
+  if [[ ${preview_exit} -ne 0 ]]; then
+    log "Preview failed (exit ${preview_exit})"
+    log "${preview_output}"
+    return 1
   fi
 
-  if [[ "${success}" == "true" ]]; then
-    cleanup_empty_dirs "${source_dir}"
-    trigger_plex_scan "${success_type}"
+  # Count files to process
+  local file_count
+  file_count=$(echo "${preview_output}" | grep -c "\[TEST\]" || echo "0")
+
+  if [[ ${file_count} -eq 0 ]]; then
+    log "Warning: Preview shows no files to rename"
+    return 1
+  fi
+
+  log "Preview: ${file_count} files to process"
+  echo "${preview_output}" | grep "\[TEST\]" | tee -a "${LOG_FILE}"
+
+  # Store output for confirmation step
+  LAST_PREVIEW_OUTPUT="${preview_output}"
+  log "Preview stored (${#LAST_PREVIEW_OUTPUT} bytes)"
+  return 0
+}
+
+# Confirm changes with user in manual mode
+confirm_changes() {
+  local summary="$1"
+
+  # Automated mode: skip confirmation
+  if [[ "${INVOCATION_MODE}" == "automated" ]]; then
+    log "Automated mode: proceeding without confirmation"
     return 0
   fi
 
-  log "Warning: Could not process media with FileBot"
+  # Manual mode: require confirmation
+  log "Manual mode: requesting user confirmation"
+
+  # Send notification if available
+  if command -v terminal-notifier &>/dev/null; then
+    terminal-notifier \
+      -title "FileBot Preview" \
+      -subtitle "${TR_TORRENT_NAME}" \
+      -message "${summary}" \
+      -sound "default" 2>/dev/null || true
+  fi
+
+  # Prompt for confirmation
+  printf '\n%s\n' "${summary}"
+  printf 'Proceed with these changes? [y/N]: '
+  read -r response
+
+  case "${response}" in
+    [yY][eE][sS] | [yY])
+      log "User confirmed: proceeding"
+      return 0
+      ;;
+    *)
+      log "User cancelled"
+      return 1
+      ;;
+  esac
+}
+
+# Detect media type using filename heuristics
+detect_media_type_heuristic() {
+  local source_dir="$1"
+  local tv_pattern_count=0
+  local movie_pattern_count=0
+
+  log "Analyzing media type using filename patterns"
+
+  # Find all media files
+  local media_files
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${media_files}" ]]; then
+    log "No media files found for type detection"
+    echo "unknown"
+    return 1
+  fi
+
+  # Count TV show patterns: S01E01, s1e1, 1x01, season, episode (case insensitive)
+  tv_pattern_count=$(echo "${media_files}" | grep -icE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+|season|episode' || echo "0")
+
+  # Count movie patterns: year 1900-2099, but NOT followed by 'p' or 'i' (to exclude 2160p, 1080i)
+  # First grep finds years, second filters out resolution markers, then count
+  movie_pattern_count=$(echo "${media_files}" | grep -iE '\b(19|20)[0-9]{2}\b' | grep -vicE '(19|20)[0-9]{2}[pi]' || echo "0")
+
+  log "Pattern counts - TV: ${tv_pattern_count:-0}, Movie: ${movie_pattern_count:-0}"
+
+  # Determine type based on pattern prevalence (with safe defaults)
+  if [[ ${tv_pattern_count:-0} -gt 0 ]] && [[ ${tv_pattern_count:-0} -ge ${movie_pattern_count:-0} ]]; then
+    echo "tv"
+    return 0
+  elif [[ ${movie_pattern_count:-0} -gt 0 ]]; then
+    echo "movie"
+    return 0
+  else
+    log "Unable to determine type from patterns"
+    echo "unknown"
+    return 1
+  fi
+}
+
+# Process media with FileBot auto-detection (no --db flag)
+process_media_with_autodetect() {
+  local source_dir="$1"
+
+  log "Attempting FileBot auto-detection (no database specified)"
+
+  run_filebot -rename "${source_dir}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    -non-strict \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Process media with a specific database
+process_with_database() {
+  local source_dir="$1"
+  local database="$2"
+
+  log "Attempting FileBot processing with database: ${database}"
+
+  run_filebot -rename "${source_dir}" \
+    --db "${database}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    -non-strict \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Process with xattr cached metadata as last resort
+process_with_xattr() {
+  local source_dir="$1"
+
+  log "Attempting FileBot processing with xattr cache (last resort)"
+
+  # FileBot can use extended attributes cached from previous runs
+  run_filebot -rename "${source_dir}" \
+    --format "{plex}" \
+    --output "${PLEX_MEDIA_PATH}" \
+    -r \
+    --conflict auto \
+    --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
+    --action move \
+    >>"${LOG_FILE}" 2>&1
+}
+
+# Try TV show database chain
+try_tv_databases() {
+  local source_dir="$1"
+
+  log "Trying TV database fallback chain"
+
+  # Chain: TheTVDB → TheMovieDB::TV → AniDB
+  local databases=("TheTVDB" "TheMovieDB::TV" "AniDB")
+
+  for db in "${databases[@]}"; do
+    log "Trying TV database: ${db}"
+    if process_with_database "${source_dir}" "${db}"; then
+      log "Success with TV database: ${db}"
+      return 0
+    fi
+    log "Failed with TV database: ${db}"
+  done
+
   return 1
+}
+
+# Try movie database chain
+try_movie_databases() {
+  local source_dir="$1"
+
+  log "Trying movie database fallback chain"
+
+  # Chain: TheMovieDB → OMDb
+  local databases=("TheMovieDB" "OMDb")
+
+  for db in "${databases[@]}"; do
+    log "Trying movie database: ${db}"
+    if process_with_database "${source_dir}" "${db}"; then
+      log "Success with movie database: ${db}"
+      return 0
+    fi
+    log "Failed with movie database: ${db}"
+  done
+
+  return 1
+}
+
+# Process media with comprehensive fallback strategy
+process_media_with_fallback() {
+  local source_dir="$1"
+  local detected_type=""
+
+  # Validate source directory exists
+  if [[ ! -d "${source_dir}" ]]; then
+    log "Error: Source directory does not exist: ${source_dir}"
+    return 1
+  fi
+
+  log "Starting comprehensive fallback processing"
+
+  # Strategy 1: Auto-detection (let FileBot decide)
+  log "Strategy 1: FileBot auto-detection"
+  if process_media_with_autodetect "${source_dir}"; then
+    log "Success: FileBot auto-detection"
+    return 0
+  fi
+  log "Failed: FileBot auto-detection"
+
+  # Strategy 2: Heuristic detection + database chains
+  log "Strategy 2: Heuristic detection with database fallback"
+  detected_type=$(detect_media_type_heuristic "${source_dir}")
+
+  if [[ "${detected_type}" == "tv" ]]; then
+    log "Detected as TV show, trying TV database chain"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database chain"
+      return 0
+    fi
+    log "Failed: TV database chain, trying movie databases as fallback"
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database fallback"
+      return 0
+    fi
+  elif [[ "${detected_type}" == "movie" ]]; then
+    log "Detected as movie, trying movie database chain"
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database chain"
+      return 0
+    fi
+    log "Failed: Movie database chain, trying TV databases as fallback"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database fallback"
+      return 0
+    fi
+  else
+    log "Unknown type, trying both TV and movie databases"
+    if try_tv_databases "${source_dir}"; then
+      log "Success: TV database chain (unknown type)"
+      return 0
+    fi
+    if try_movie_databases "${source_dir}"; then
+      log "Success: Movie database chain (unknown type)"
+      return 0
+    fi
+  fi
+
+  # Strategy 3: xattr cache (last resort)
+  log "Strategy 3: xattr cache (last resort)"
+  if process_with_xattr "${source_dir}"; then
+    log "Success: xattr cache"
+    return 0
+  fi
+  log "Failed: xattr cache"
+
+  log "Error: All fallback strategies exhausted"
+  return 1
+}
+
+process_media() {
+  local source_dir="$1"
+
+  log "Processing media in ${source_dir}"
+
+  # Step 1: Check disk space
+  if ! check_disk_space; then
+    log "Error: Disk space check failed"
+    return 1
+  fi
+
+  # Step 2: Verify files are ready (not being downloaded)
+  if ! check_files_ready "${source_dir}" 10; then
+    log "Error: Files not ready for processing (still downloading or locked)"
+    return 1
+  fi
+
+  # Step 3: Preview changes with dry-run
+  if ! preview_filebot_changes "${source_dir}"; then
+    log "Error: Preview failed - cannot determine what changes would be made"
+    return 1
+  fi
+
+  # Step 4: Confirm changes with user (manual mode only)
+  local file_count
+  file_count=$(echo "${LAST_PREVIEW_OUTPUT}" | grep -c "\[TEST\]" || echo "0")
+  if ! confirm_changes "${file_count} files ready to process"; then
+    log "User cancelled processing"
+    return 1
+  fi
+
+  # Step 5: Process with comprehensive fallback strategy
+  local filebot_output filebot_exit
+  filebot_output=$(process_media_with_fallback "${source_dir}" 2>&1)
+  filebot_exit=$?
+
+  if [[ ${filebot_exit} -ne 0 ]]; then
+    log "Error: All FileBot strategies failed"
+    log_filebot_error "${filebot_exit}" "${filebot_output}" "${source_dir}" "fallback-chain"
+    return 1
+  fi
+
+  log "Successfully processed media"
+
+  # Step 6: Cleanup and trigger Plex scan
+  cleanup_empty_dirs "${source_dir}"
+
+  # Determine media type from processed result for Plex scan
+  # Check if files ended up in TV or Movie directories
+  local detected_type="movie" # default
+  if echo "${filebot_output}" | grep -iq "TV Shows"; then
+    detected_type="show"
+  fi
+
+  trigger_plex_scan "${detected_type}"
+  log "Processing completed successfully"
+  return 0
 }
 
 cleanup_torrent() {
@@ -574,22 +1185,79 @@ if [[ "${TEST_MODE}" == "true" ]]; then
   }
 fi
 
+# Detect whether script was invoked by Transmission or manually
+detect_invocation_mode() {
+  if [[ -n "${TR_TORRENT_DIR:-}" ]] && [[ -n "${TR_TORRENT_NAME:-}" ]]; then
+    INVOCATION_MODE="automated"
+    log "Detected AUTOMATED mode (Transmission callback)"
+  else
+    INVOCATION_MODE="manual"
+    log "Detected MANUAL mode (user invocation)"
+  fi
+}
+
+# Prompt user for directory in manual mode
+prompt_for_directory() {
+  local selected_dir=""
+
+  # In test mode, return a default directory without prompting
+  if [[ "${TEST_MODE:-false}" == "true" ]]; then
+    selected_dir="${HOME}/Movies/"
+    log "TEST MODE: Using default directory: ${selected_dir}"
+    echo "${selected_dir}"
+    return 0
+  fi
+
+  # Try macOS native folder picker via osascript
+  if command -v osascript &>/dev/null; then
+    selected_dir=$(osascript -e 'POSIX path of (choose folder with prompt "Select media directory to process:")' 2>/dev/null || echo "")
+  fi
+
+  # Fallback to terminal prompt if osascript failed or unavailable
+  if [[ -z "${selected_dir}" ]]; then
+    printf 'Enter path to media directory: ' >&2
+    read -r selected_dir
+  fi
+
+  # Expand tilde to home directory
+  selected_dir="${selected_dir/#\~/${HOME}}"
+
+  # Validate directory exists
+  if [[ ! -d "${selected_dir}" ]]; then
+    log "Error: Not a valid directory: ${selected_dir}"
+    return 1
+  fi
+
+  echo "${selected_dir}"
+}
+
 validate_environment() {
-  # Skip transmission variable check in test mode unless explicitly testing for it
-  if [[ "${TEST_MODE}" != "true" ]] || [[ "${TEST_RUNNER}" == "true" ]]; then
+  # Detect invocation mode first
+  detect_invocation_mode
+
+  # Mode-specific validation
+  if [[ "${INVOCATION_MODE}" == "automated" ]]; then
+    # Automated mode: Transmission must have set TR_* variables
     if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
       printf 'Error: Required Transmission variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' \
         "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
       return 1
     fi
+    log "Using Transmission directory: ${TR_TORRENT_DIR}"
+  else
+    # Manual mode: Prompt for directory and set TR_* variables for compatibility
+    local source_dir torrent_name
+    source_dir=$(prompt_for_directory) || return 1
+    torrent_name=$(basename "${source_dir}")
+
+    # Set TR_* variables so rest of script works unchanged
+    export TR_TORRENT_DIR="${source_dir}"
+    export TR_TORRENT_NAME="${torrent_name}"
+
+    log "Using manual directory: ${TR_TORRENT_DIR}"
   fi
 
-  if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
-    printf 'Error: Required Transmission variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' \
-      "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
-    return 1
-  fi
-
+  # Common validation: Plex path must exist and be writable
   if [[ ! -d "${PLEX_MEDIA_PATH}" ]]; then
     printf 'Error: Plex media path %s does not exist\n' "${PLEX_MEDIA_PATH}" >&2
     return 1
@@ -610,31 +1278,59 @@ initialize() {
     return 1
   fi
 
+  # Check dependencies
+  if ! check_dependencies; then
+    printf 'Error: Missing required dependencies\n' >&2
+    return 1
+  fi
+
   return 0
 }
 
 main() {
+  local main_exit_code=0
+
   # Validate environment variables first
   if ! validate_environment; then
     log "Error: Environment validation failed"
-    return 1
+    main_exit_code=1
+  else
+    rotate_log
+    log "Starting post-download processing for ${TR_TORRENT_NAME}"
+
+    # Continue with processing...
+    if ! cleanup_torrent "${TR_TORRENT_DIR}"; then
+      log "Warning: Cleanup failed but continuing"
+    fi
+
+    if ! process_media "${TR_TORRENT_DIR}"; then
+      log "Error: Media processing failed"
+      main_exit_code=1
+    else
+      log "Processing completed successfully"
+    fi
   fi
 
-  rotate_log
-  log "Starting post-download processing for ${TR_TORRENT_NAME}"
-
-  # Continue with processing...
-  if ! cleanup_torrent "${TR_TORRENT_DIR}"; then
-    log "Warning: Cleanup failed but continuing"
+  # Send notification in manual mode
+  if [[ "${INVOCATION_MODE}" == "manual" ]]; then
+    if command -v terminal-notifier &>/dev/null; then
+      if [[ ${main_exit_code} -eq 0 ]]; then
+        terminal-notifier \
+          -title "Media Processing Complete" \
+          -subtitle "${TR_TORRENT_NAME}" \
+          -message "Successfully processed and added to Plex" \
+          -sound "Glass" 2>/dev/null || true
+      else
+        terminal-notifier \
+          -title "Media Processing Failed" \
+          -subtitle "${TR_TORRENT_NAME}" \
+          -message "Check log for details: ${LOG_FILE}" \
+          -sound "Basso" 2>/dev/null || true
+      fi
+    fi
   fi
 
-  if ! process_media "${TR_TORRENT_DIR}"; then
-    log "Error: Media processing failed"
-    return 1
-  fi
-
-  log "Processing completed successfully"
-  return 0
+  return "${main_exit_code}"
 }
 
 # Early initialization to set test flags and logging

@@ -1,5 +1,7 @@
 # Transmission-Plex Media Manager
 
+[![CI Tests](https://github.com/smartwatermelon/transmission-filebot/actions/workflows/test.yml/badge.svg)](https://github.com/smartwatermelon/transmission-filebot/actions/workflows/test.yml)
+
 A robust solution for automatically processing downloaded media files from Transmission, organizing them with FileBot, and triggering Plex library updates. This project evolved from a simple cleanup script into a comprehensive media management solution.
 
 ## Prerequisites
@@ -88,6 +90,41 @@ When Transmission completes a download:
    - Import subtitles
 4. Triggers a Plex library scan
 5. Logs all actions for troubleshooting
+
+## Manual Invocation
+
+The script supports both automated (Transmission) and manual invocation modes.
+
+### Terminal Mode
+
+Double-click `process-media.command` or run from terminal:
+
+```bash
+./process-media.command
+```
+
+The script will:
+
+1. Present a native macOS folder picker dialog
+2. Process all media files in the selected folder
+3. Show preview and ask for confirmation
+4. Display macOS notifications on completion
+
+### Drag-and-Drop Mode
+
+Create `MediaProcessor.app` using Automator (see `CREATE_AUTOMATOR_APP.md`):
+
+1. Drag a folder containing media files onto the app
+2. The app processes the files automatically
+3. Notifications indicate success or failure
+
+### Manual Mode Features
+
+- **Safety Checks**: Verifies files are complete (not being downloaded)
+- **Preview**: Shows what changes will be made before processing
+- **Confirmation**: Asks for approval before moving files
+- **Notifications**: macOS notifications with success/failure sounds
+- **No Transmission Required**: Works independently of Transmission
 
 ## Troubleshooting
 

@@ -1,0 +1,161 @@
+name: CI Tests
+
+on:
+  push:
+    branches: [ main, claude/* ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  lint:
+    name: ShellCheck Validation
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: brew install shellcheck
+
+      - name: Run shellcheck on main script
+        run: shellcheck transmission-done.sh
+
+      - name: Run shellcheck on test helpers
+        run: |
+          if [ -f test/test_helper.bash ]; then
+            shellcheck test/test_helper.bash
+          fi
+
+  test:
+    name: Inline Tests
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install bash yq
+
+      - name: Detect Bash location and verify version
+        run: |
+          echo "System bash: $(bash --version | head -1)"
+
+          # Detect Homebrew Bash location (Apple Silicon vs Intel)
+          if [ -f /opt/homebrew/bin/bash ]; then
+            BASH_PATH="/opt/homebrew/bin/bash"
+          elif [ -f /usr/local/bin/bash ]; then
+            BASH_PATH="/usr/local/bin/bash"
+          else
+            echo "❌ Homebrew Bash not found"
+            exit 1
+          fi
+
+          echo "Homebrew bash: $($BASH_PATH --version | head -1)"
+          echo "BASH_PATH=$BASH_PATH" >> $GITHUB_ENV
+
+      - name: Make script executable
+        run: chmod +x transmission-done.sh
+
+      - name: Run inline tests
+        run: |
+          # Set required environment variables for test mode
+          export TEST_MODE=true
+          export FILEBOT_TEST_OVERRIDE=true
+          export PLEX_SERVER="http://localhost:32400"
+          export PLEX_TOKEN="test_token"
+          export PLEX_MEDIA_PATH="/tmp/plex-test"
+          export LOG_FILE="/tmp/transmission-test.log"
+
+          # Create test directories
+          mkdir -p "${PLEX_MEDIA_PATH}"
+
+          # Run tests with Bash 5 and capture output
+          $BASH_PATH ./transmission-done.sh 2>&1 | tee test_output.log
+
+          # Check test results
+          if grep -q "Failed tests: 0" test_output.log; then
+            echo "✅ All tests passed"
+            exit 0
+          else
+            echo "❌ Tests failed"
+            cat test_output.log
+            exit 1
+          fi
+
+      - name: Upload test logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs
+          path: |
+            test_output.log
+            /tmp/transmission-test.log
+          retention-days: 7
+
+  bats-tests:
+    name: BATS Unit Tests
+    runs-on: macos-latest
+    if: false  # Disabled until Phase 8 completion
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          brew install bats-core bats-support bats-assert yq
+
+      - name: Make script executable
+        run: chmod +x transmission-done.sh
+
+      - name: Run BATS tests
+        run: |
+          if [ -d test/unit ]; then
+            bats test/unit/*.bats
+          fi
+
+          if [ -d test/integration ]; then
+            bats test/integration/*.bats
+          fi
+
+      - name: Upload test results on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bats-results
+          path: test/
+          retention-days: 7
+
+  summary:
+    name: Test Summary
+    runs-on: macos-latest
+    needs: [lint, test]
+    if: always()
+
+    steps:
+      - name: Check results
+        run: |
+          echo "## CI Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+
+          if [ "${{ needs.lint.result }}" == "success" ]; then
+            echo "✅ ShellCheck: PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ ShellCheck: FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          if [ "${{ needs.test.result }}" == "success" ]; then
+            echo "✅ Inline Tests: PASSED" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "❌ Inline Tests: FAILED" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "📊 **Overall Status**: ${{ (needs.lint.result == 'success' && needs.test.result == 'success') && 'PASSED' || 'FAILED' }}" >> $GITHUB_STEP_SUMMARY
+
+      - name: Fail if any job failed
+        if: needs.lint.result != 'success' || needs.test.result != 'success'
+        run: exit 1
