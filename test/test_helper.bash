@@ -6,6 +6,10 @@
 export SCRIPT_DIR
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Set TEST_RUNNER=true to prevent main() from running when sourcing
+export TEST_RUNNER=true
+export TEST_MODE=true
+
 # Source transmission-done.sh to load all functions (BATS loads this at runtime)
 if [[ -f "${SCRIPT_DIR}/transmission-done.sh" ]]; then
   # shellcheck source=/dev/null
@@ -98,12 +102,13 @@ assert_dir_exists() {
 }
 
 # Helper function to assert exit code
+# BATS stores exit code in $status when using 'run' command
 assert_success() {
-  [[ "$?" -eq 0 ]] || return 1
+  [[ "${status:-$?}" -eq 0 ]] || return 1
 }
 
 assert_failure() {
-  [[ "$?" -ne 0 ]] || return 1
+  [[ "${status:-$?}" -ne 0 ]] || return 1
 }
 
 # Helper function to assert output contains string
