@@ -16,6 +16,10 @@ check_dependencies() {
     missing_deps+=("yq")
   fi
 
+  if ! command -v xq &>/dev/null; then
+    missing_deps+=("xq (from yq package)")
+  fi
+
   if ! command -v curl &>/dev/null; then
     missing_deps+=("curl")
   fi
@@ -31,6 +35,7 @@ check_dependencies() {
     done
     printf '\nInstallation:\n' >&2
     printf '  brew install yq jq\n' >&2
+    printf '  (yq package includes xq for XML parsing)\n' >&2
     printf '  curl should be pre-installed on macOS\n' >&2
     return 1
   fi
@@ -116,20 +121,21 @@ get_plex_library_info() {
     return 1
   fi
 
-  # Parse and display library sections
+  # Parse XML with xq and display library sections
   printf 'Available library sections:\n'
-  echo "${response}" | grep -o '<Directory[^>]*>' | while read -r section; do
-    local id type title location
-    id=$(echo "${section}" | grep -o 'key="[^"]*"' | cut -d'"' -f2)
-    type=$(echo "${section}" | grep -o 'type="[^"]*"' | cut -d'"' -f2)
-    title=$(echo "${section}" | grep -o 'title="[^"]*"' | cut -d'"' -f2)
-
+  echo "${response}" | xq -r '.MediaContainer.Directory[]? |
+    "\(.["@key"]) \(.["@type"]) \(.["@title"])"' 2>/dev/null | while read -r id type title; do
     # Get location for this section
-    local section_detail
+    local section_detail location
     section_detail=$(curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections/${id}" 2>/dev/null || echo "")
+
     if [[ -n "${section_detail}" ]]; then
-      location=$(echo "${section_detail}" | grep -o '<Location[^>]*path="[^"]*"' | sed 's/.*path="\([^"]*\)".*/\1/' | head -1)
-      printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}"
+      location=$(echo "${section_detail}" | xq -r '.MediaContainer.Directory[0].Location[0]["@path"]? // empty' 2>/dev/null)
+      if [[ -n "${location}" ]]; then
+        printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}"
+      else
+        printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}"
+      fi
     else
       printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}"
     fi
