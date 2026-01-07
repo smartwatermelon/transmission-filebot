@@ -243,6 +243,122 @@ check_disk_space() {
   return 0
 }
 
+# Check if a single file is ready (quick check without sleep)
+check_file_ready_quick() {
+  local file="$1"
+
+  # Check 1: lsof - is file open by Transmission?
+  if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
+    log "File still open by Transmission: ${file}"
+    return 1
+  fi
+
+  # Check 2: .part marker
+  if [[ -f "${file}.part" ]]; then
+    log "Incomplete marker found: ${file}.part"
+    return 1
+  fi
+
+  # Check 3: .incomplete marker
+  if [[ -f "${file}.incomplete" ]]; then
+    log "Incomplete marker found: ${file}.incomplete"
+    return 1
+  fi
+
+  return 0
+}
+
+# Check if all media files in directory are ready to process
+check_files_ready() {
+  local source_dir="$1"
+  local stability_seconds="${2:-10}"
+
+  log "Validating files are ready for processing (${stability_seconds}s stability check)"
+
+  # Find all media files with corrected syntax
+  local media_files
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${media_files}" ]]; then
+    log "Warning: No media files found in ${source_dir}"
+    return 1
+  fi
+
+  local file_count=0
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    ((file_count += 1))
+
+    # Quick checks (lsof + markers)
+    if ! check_file_ready_quick "${file}"; then
+      log "File not ready: ${file}"
+      return 1
+    fi
+
+    # Size stability check
+    local size_before size_after
+    size_before=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+    sleep "${stability_seconds}"
+    size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+
+    if [[ "${size_before}" != "${size_after}" ]]; then
+      log "File size changed: ${file} (${size_before} → ${size_after} bytes)"
+      return 1
+    fi
+
+    log "File ready: ${file} (${size_after} bytes)"
+  done <<<"${media_files}"
+
+  log "All ${file_count} files validated and ready"
+  return 0
+}
+
+# Discover and filter media files (for manual mode)
+discover_and_filter_media_files() {
+  local search_dir="$1"
+  local include_incomplete="${2:-false}"
+
+  log "Discovering media files in ${search_dir}"
+
+  # Find all media files recursively with corrected syntax
+  local all_files
+  all_files=$(find "${search_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+
+  if [[ -z "${all_files}" ]]; then
+    log "No media files found"
+    return 1
+  fi
+
+  local ready_count=0
+  local incomplete_count=0
+  local ready_files=""
+
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+
+    if check_file_ready_quick "${file}"; then
+      ((ready_count += 1))
+      ready_files="${ready_files}${file}"$'\n'
+    else
+      ((incomplete_count += 1))
+      if [[ "${include_incomplete}" == "false" ]]; then
+        log "Filtered incomplete: ${file}"
+      fi
+    fi
+  done <<<"${all_files}"
+
+  log "Discovery complete: ${ready_count} ready, ${incomplete_count} incomplete"
+
+  if [[ ${ready_count} -eq 0 ]]; then
+    log "Error: No ready files found"
+    return 1
+  fi
+
+  # Output ready files
+  echo -n "${ready_files}"
+  return 0
+}
+
 process_tv_show() {
   local source_dir="$1"
 
