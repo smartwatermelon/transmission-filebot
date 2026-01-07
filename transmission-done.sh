@@ -703,20 +703,27 @@ detect_media_type_heuristic() {
     return 1
   fi
 
+  log "DEBUG: Found media files: ${media_files}"
+
   # Count TV show patterns: S01E01, s1e1, 1x01, season, episode (case insensitive)
   tv_pattern_count=$(echo "${media_files}" | grep -icE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+|season|episode') || tv_pattern_count=0
+
+  log "DEBUG: TV grep result: ${tv_pattern_count}"
 
   # Count movie patterns: year 1900-2099, but NOT followed by 'p' or 'i' (to exclude 2160p, 1080i)
   # First grep finds years, second filters out resolution markers, then count
   movie_pattern_count=$(echo "${media_files}" | grep -iE '\b(19|20)[0-9]{2}\b' | grep -vicE '(19|20)[0-9]{2}[pi]') || movie_pattern_count=0
 
+  log "DEBUG: Movie grep result: ${movie_pattern_count}"
   log "Pattern counts - TV: ${tv_pattern_count:-0}, Movie: ${movie_pattern_count:-0}"
 
   # Determine type based on pattern prevalence (with safe defaults)
   if [[ ${tv_pattern_count:-0} -gt 0 ]] && [[ ${tv_pattern_count:-0} -ge ${movie_pattern_count:-0} ]]; then
+    log "DEBUG: Returning tv (TV=${tv_pattern_count}, Movie=${movie_pattern_count})"
     echo "tv"
     return 0
   elif [[ ${movie_pattern_count:-0} -gt 0 ]]; then
+    log "DEBUG: Returning movie (TV=${tv_pattern_count}, Movie=${movie_pattern_count})"
     echo "movie"
     return 0
   else
