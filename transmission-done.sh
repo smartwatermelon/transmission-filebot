@@ -478,7 +478,10 @@ check_files_ready() {
     return 1
   fi
 
+  # Phase 1: Quick checks and initial sizes
   local file_count=0
+  declare -A sizes_before
+
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
     ((file_count += 1))
@@ -489,14 +492,23 @@ check_files_ready() {
       return 1
     fi
 
-    # Size stability check
-    local size_before size_after
-    size_before=$(stat -f%z "${file}" 2>/dev/null || echo "0")
-    sleep "${stability_seconds}"
+    # Record initial size
+    sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+  done <<<"${media_files}"
+
+  # Phase 2: Sleep once for entire batch
+  log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
+  sleep "${stability_seconds}"
+
+  # Phase 3: Check final sizes
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+
+    local size_after
     size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
 
-    if [[ "${size_before}" != "${size_after}" ]]; then
-      log "File size changed: ${file} (${size_before} → ${size_after} bytes)"
+    if [[ "${sizes_before[${file}]}" != "${size_after}" ]]; then
+      log "File size changed: ${file} (${sizes_before[${file}]} → ${size_after} bytes)"
       return 1
     fi
 
