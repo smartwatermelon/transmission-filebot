@@ -226,11 +226,27 @@ run_filebot() {
       return 0
     fi
 
+    # Preview mode (--action test) always succeeds with test output
+    if [[ "$*" == *"--action test"* ]]; then
+      echo "TEST: [RENAME] from [file.mkv] to [processed.mkv]"
+      return 0
+    fi
+
+    # Auto-detect mode (no --db flag) for test directories
+    if [[ "$*" != *"--db"* ]]; then
+      if [[ "$*" == *"/test/The.Show.S01E01"* || "$*" == *"/test/The.Movie.2024"* ]]; then
+        echo "Processed files to output directory"
+        return 0
+      fi
+    fi
+
+    # Database-specific processing for test directories
     if [[ "$*" == *"TheTVDB"* && "$*" == *"/test/The.Show.S01E01"* ]]; then
       return 0
     elif [[ "$*" == *"TheMovieDB"* && "$*" == *"/test/The.Movie.2024"* ]]; then
       return 0
     fi
+
     return 1
   else
     local FILEBOT
@@ -804,70 +820,61 @@ process_media_with_fallback() {
 
 process_media() {
   local source_dir="$1"
-  local success=false
-  local success_type=""
 
   log "Processing media in ${source_dir}"
 
-  check_disk_space || return 1
-
-  # Try to determine media type first using filename patterns
-  local is_likely_tv=false
-  local is_likely_movie=false
-
-  # Match TV patterns: S01E01, s1e1, 1x01 (case insensitive)
-  if find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) | grep -iE 's[0-9]+e[0-9]+|[0-9]+x[0-9]+' >/dev/null; then
-    is_likely_tv=true
-    log "Media appears to be a TV show based on filename pattern"
-  # Match year 1900-2099 not followed by 'p' or 'i' (avoids matching resolution like 1080p)
-  elif find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) | grep -iE '(19|20)[0-9]{2}[^ip]' >/dev/null; then
-    is_likely_movie=true
-    log "Media appears to be a movie based on filename pattern"
+  # Step 1: Check disk space
+  if ! check_disk_space; then
+    log "Error: Disk space check failed"
+    return 1
   fi
 
-  # Process based on likely type first
-  if [[ "${is_likely_tv}" == "true" ]]; then
-    if process_tv_show "${source_dir}"; then
-      log "Successfully processed as TV show"
-      success=true
-      success_type="show"
-    else
-      log "TV show processing failed despite TV pattern match"
-    fi
-  elif [[ "${is_likely_movie}" == "true" ]]; then
-    if process_movie "${source_dir}"; then
-      log "Successfully processed as movie"
-      success=true
-      success_type="movie"
-    else
-      log "Movie processing failed despite movie pattern match"
-    fi
-  else
-    # If no clear pattern, try both but log a warning
-    log "Warning: Unable to determine media type from filename patterns"
-
-    if process_movie "${source_dir}"; then
-      log "Successfully processed as movie"
-      success=true
-      success_type="movie"
-    else
-      log "Movie processing failed, trying TV show as fallback..."
-      if process_tv_show "${source_dir}"; then
-        log "Successfully processed as TV show"
-        success=true
-        success_type="show"
-      fi
-    fi
+  # Step 2: Verify files are ready (not being downloaded)
+  if ! check_files_ready "${source_dir}" 10; then
+    log "Error: Files not ready for processing (still downloading or locked)"
+    return 1
   fi
 
-  if [[ "${success}" == "true" ]]; then
-    cleanup_empty_dirs "${source_dir}"
-    trigger_plex_scan "${success_type}"
-    return 0
+  # Step 3: Preview changes with dry-run
+  if ! preview_filebot_changes "${source_dir}"; then
+    log "Error: Preview failed - cannot determine what changes would be made"
+    return 1
   fi
 
-  log "Warning: Could not process media with FileBot"
-  return 1
+  # Step 4: Confirm changes with user (manual mode only)
+  local file_count
+  file_count=$(echo "${LAST_PREVIEW_OUTPUT}" | grep -c "TEST:" || echo "0")
+  if ! confirm_changes "${file_count} files ready to process"; then
+    log "User cancelled processing"
+    return 1
+  fi
+
+  # Step 5: Process with comprehensive fallback strategy
+  local filebot_output filebot_exit
+  filebot_output=$(process_media_with_fallback "${source_dir}" 2>&1)
+  filebot_exit=$?
+
+  if [[ ${filebot_exit} -ne 0 ]]; then
+    log "Error: All FileBot strategies failed"
+    log_filebot_error "${filebot_exit}" "${filebot_output}" "${source_dir}" "fallback-chain"
+    return 1
+  fi
+
+  log "Successfully processed media"
+
+  # Step 6: Cleanup and trigger Plex scan
+  cleanup_empty_dirs "${source_dir}"
+
+  # Determine media type from processed result for Plex scan
+  # Check if files ended up in TV or Movie directories
+  local detected_type="movie" # default
+  if echo "${filebot_output}" | grep -iq "TV Shows"; then
+    detected_type="show"
+  fi
+
+  trigger_plex_scan "${detected_type}"
+  log "Processing completed successfully"
+  return 0
 }
 
 cleanup_torrent() {
@@ -1201,27 +1208,49 @@ initialize() {
 }
 
 main() {
+  local main_exit_code=0
+
   # Validate environment variables first
   if ! validate_environment; then
     log "Error: Environment validation failed"
-    return 1
+    main_exit_code=1
+  else
+    rotate_log
+    log "Starting post-download processing for ${TR_TORRENT_NAME}"
+
+    # Continue with processing...
+    if ! cleanup_torrent "${TR_TORRENT_DIR}"; then
+      log "Warning: Cleanup failed but continuing"
+    fi
+
+    if ! process_media "${TR_TORRENT_DIR}"; then
+      log "Error: Media processing failed"
+      main_exit_code=1
+    else
+      log "Processing completed successfully"
+    fi
   fi
 
-  rotate_log
-  log "Starting post-download processing for ${TR_TORRENT_NAME}"
-
-  # Continue with processing...
-  if ! cleanup_torrent "${TR_TORRENT_DIR}"; then
-    log "Warning: Cleanup failed but continuing"
+  # Send notification in manual mode
+  if [[ "${INVOCATION_MODE}" == "manual" ]]; then
+    if command -v terminal-notifier &>/dev/null; then
+      if [[ ${main_exit_code} -eq 0 ]]; then
+        terminal-notifier \
+          -title "Media Processing Complete" \
+          -subtitle "${TR_TORRENT_NAME}" \
+          -message "Successfully processed and added to Plex" \
+          -sound "Glass" 2>/dev/null || true
+      else
+        terminal-notifier \
+          -title "Media Processing Failed" \
+          -subtitle "${TR_TORRENT_NAME}" \
+          -message "Check log for details: ${LOG_FILE}" \
+          -sound "Basso" 2>/dev/null || true
+      fi
+    fi
   fi
 
-  if ! process_media "${TR_TORRENT_DIR}"; then
-    log "Error: Media processing failed"
-    return 1
-  fi
-
-  log "Processing completed successfully"
-  return 0
+  return "${main_exit_code}"
 }
 
 # Early initialization to set test flags and logging
