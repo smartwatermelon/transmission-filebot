@@ -105,7 +105,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          brew install bats-core bats-support bats-assert yq
+          brew install bats-core yq
 
       - name: Make script executable
         run: chmod +x transmission-done.sh

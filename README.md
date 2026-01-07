@@ -202,10 +202,10 @@ This project uses [BATS (Bash Automated Testing System)](https://github.com/bats
 
 ### Prerequisites
 
-Install BATS and related tools:
+Install BATS:
 
 ```bash
-brew install bats-core bats-support bats-assert
+brew install bats-core
 ```
 
 ### Running Tests
