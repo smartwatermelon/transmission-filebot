@@ -122,15 +122,40 @@ get_plex_library_info() {
   fi
 
   # Parse XML with xq and display library sections
+  # Handle both single object and array responses from Plex API
+  local sections
+  if ! sections=$(echo "${response}" | xq -r '
+    (.MediaContainer.Directory // []) |
+    if type == "array" then .[] else . end |
+    "\(.["@key"]) \(.["@type"]) \(.["@title"])"
+  ' 2>/dev/null); then
+    printf 'Warning: Could not parse library sections XML\n' >&2
+    return 1
+  fi
+
+  if [[ -z "${sections}" ]]; then
+    printf 'Warning: No library sections found\n' >&2
+    return 1
+  fi
+
   printf 'Available library sections:\n'
-  echo "${response}" | xq -r '.MediaContainer.Directory[]? |
-    "\(.["@key"]) \(.["@type"]) \(.["@title"])"' 2>/dev/null | while read -r id type title; do
+  echo "${sections}" | while read -r id type title; do
+    [[ -z "${id}" ]] && continue
+
     # Get location for this section
     local section_detail location
     section_detail=$(curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections/${id}" 2>/dev/null || echo "")
 
     if [[ -n "${section_detail}" ]]; then
-      location=$(echo "${section_detail}" | xq -r '.MediaContainer.Directory[0].Location[0]["@path"]? // empty' 2>/dev/null)
+      # Extract path from first Location element
+      location=$(echo "${section_detail}" | xq -r '
+        (.MediaContainer.Directory // []) |
+        if type == "array" then .[0] else . end |
+        (.Location // []) |
+        if type == "array" then .[0] else . end |
+        .["@path"]? // empty
+      ' 2>/dev/null)
+
       if [[ -n "${location}" ]]; then
         printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}"
       else
