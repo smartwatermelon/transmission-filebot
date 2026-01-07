@@ -10,28 +10,65 @@ readonly USER_CONFIG="${USER_CONFIG_DIR}/config.yml"
 
 check_dependencies() {
   local missing_deps=()
+  local missing_brew_deps=()
 
   # Required dependencies
   if ! command -v yq &>/dev/null; then
     missing_deps+=("yq")
+    missing_brew_deps+=("yq")
   fi
 
   if ! command -v xmlstarlet &>/dev/null; then
     missing_deps+=("xmlstarlet")
+    missing_brew_deps+=("xmlstarlet")
   fi
 
   if ! command -v curl &>/dev/null; then
     missing_deps+=("curl")
   fi
 
-  if [[ ${#missing_deps[@]} -gt 0 ]]; then
-    printf 'Error: Missing required dependencies:\n' >&2
-    for dep in "${missing_deps[@]}"; do
-      printf '  - %s\n' "${dep}" >&2
-    done
-    printf '\nInstallation:\n' >&2
-    printf '  brew install yq xmlstarlet\n' >&2
-    printf '  curl should be pre-installed on macOS\n' >&2
+  if [[ ${#missing_deps[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  # Report missing dependencies
+  printf 'Missing required dependencies:\n' >&2
+  for dep in "${missing_deps[@]}"; do
+    printf '  - %s\n' "${dep}" >&2
+  done
+  printf '\n'
+
+  # Offer to install brew packages
+  if [[ ${#missing_brew_deps[@]} -gt 0 ]]; then
+    if ! command -v brew &>/dev/null; then
+      printf 'Error: Homebrew not found. Install from https://brew.sh/\n' >&2
+      return 1
+    fi
+
+    printf 'Install missing dependencies with Homebrew? [y/N]: '
+    read -r response
+
+    case "${response}" in
+      [yY][eE][sS] | [yY])
+        printf 'Installing: %s\n' "${missing_brew_deps[*]}"
+        if brew install "${missing_brew_deps[@]}"; then
+          printf 'Dependencies installed successfully.\n'
+        else
+          printf 'Error: Failed to install dependencies\n' >&2
+          return 1
+        fi
+        ;;
+      *)
+        printf 'Installation cancelled. Please install manually:\n' >&2
+        printf '  brew install %s\n' "${missing_brew_deps[*]}" >&2
+        return 1
+        ;;
+    esac
+  fi
+
+  # Check if curl is missing (should be pre-installed on macOS)
+  if ! command -v curl &>/dev/null; then
+    printf 'Error: curl not found (should be pre-installed on macOS)\n' >&2
     return 1
   fi
 
