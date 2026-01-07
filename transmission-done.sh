@@ -27,6 +27,9 @@ PLEX_MEDIA_PATH="${PLEX_MEDIA_PATH:-}"
 LOG_FILE=""
 MAX_LOG_SIZE=0
 
+# Invocation mode tracking
+INVOCATION_MODE=""
+
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
@@ -690,22 +693,71 @@ if [[ "${TEST_MODE}" == "true" ]]; then
   }
 fi
 
+# Detect whether script was invoked by Transmission or manually
+detect_invocation_mode() {
+  if [[ -n "${TR_TORRENT_DIR:-}" ]] && [[ -n "${TR_TORRENT_NAME:-}" ]]; then
+    INVOCATION_MODE="automated"
+    log "Detected AUTOMATED mode (Transmission callback)"
+  else
+    INVOCATION_MODE="manual"
+    log "Detected MANUAL mode (user invocation)"
+  fi
+}
+
+# Prompt user for directory in manual mode
+prompt_for_directory() {
+  local selected_dir=""
+
+  # Try macOS native folder picker via osascript
+  if command -v osascript &>/dev/null; then
+    selected_dir=$(osascript -e 'POSIX path of (choose folder with prompt "Select media directory to process:")' 2>/dev/null || echo "")
+  fi
+
+  # Fallback to terminal prompt if osascript failed or unavailable
+  if [[ -z "${selected_dir}" ]]; then
+    printf 'Enter path to media directory: ' >&2
+    read -r selected_dir
+  fi
+
+  # Expand tilde to home directory
+  selected_dir="${selected_dir/#\~/${HOME}}"
+
+  # Validate directory exists
+  if [[ ! -d "${selected_dir}" ]]; then
+    log "Error: Not a valid directory: ${selected_dir}"
+    return 1
+  fi
+
+  echo "${selected_dir}"
+}
+
 validate_environment() {
-  # Skip transmission variable check in test mode unless explicitly testing for it
-  if [[ "${TEST_MODE}" != "true" ]] || [[ "${TEST_RUNNER}" == "true" ]]; then
+  # Detect invocation mode first
+  detect_invocation_mode
+
+  # Mode-specific validation
+  if [[ "${INVOCATION_MODE}" == "automated" ]]; then
+    # Automated mode: Transmission must have set TR_* variables
     if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
       printf 'Error: Required Transmission variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' \
         "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
       return 1
     fi
+    log "Using Transmission directory: ${TR_TORRENT_DIR}"
+  else
+    # Manual mode: Prompt for directory and set TR_* variables for compatibility
+    local source_dir torrent_name
+    source_dir=$(prompt_for_directory) || return 1
+    torrent_name=$(basename "${source_dir}")
+
+    # Set TR_* variables so rest of script works unchanged
+    export TR_TORRENT_DIR="${source_dir}"
+    export TR_TORRENT_NAME="${torrent_name}"
+
+    log "Using manual directory: ${TR_TORRENT_DIR}"
   fi
 
-  if [[ -z "${TR_TORRENT_DIR:-}" ]] || [[ -z "${TR_TORRENT_NAME:-}" ]]; then
-    printf 'Error: Required Transmission variables not set\nTR_TORRENT_DIR: \t[%s]\nTR_TORRENT_NAME:\t[%s]\n' \
-      "${TR_TORRENT_DIR:-}" "${TR_TORRENT_NAME:-}" >&2
-    return 1
-  fi
-
+  # Common validation: Plex path must exist and be writable
   if [[ ! -d "${PLEX_MEDIA_PATH}" ]]; then
     printf 'Error: Plex media path %s does not exist\n' "${PLEX_MEDIA_PATH}" >&2
     return 1
