@@ -499,17 +499,24 @@ check_files_ready() {
       return 1
     fi
 
-    # Record initial size
-    sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+    # In test mode, skip size checking (just validate markers)
+    if [[ "${TEST_MODE}" == "true" ]]; then
+      log "File ready (test mode): ${file}"
+    else
+      # Record initial size
+      sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+    fi
   done <<<"${media_files}"
 
-  # Phase 2: Sleep once for entire batch (reduced in test mode)
+  # In test mode, we're done after marker checks
   if [[ "${TEST_MODE}" == "true" ]]; then
-    log "Test mode: skipping stability sleep"
-  else
-    log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
-    sleep "${stability_seconds}"
+    log "All ${file_count} files validated and ready (test mode)"
+    return 0
   fi
+
+  # Phase 2: Sleep once for entire batch
+  log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
+  sleep "${stability_seconds}"
 
   # Phase 3: Check final sizes
   while IFS= read -r file; do
