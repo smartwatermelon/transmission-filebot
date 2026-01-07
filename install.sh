@@ -306,6 +306,13 @@ install_symlink() {
     return 1
   fi
 
+  # Ensure target script is executable
+  if ! chmod +x "${target}"; then
+    printf 'Error: Failed to set execute permissions on %s\n' "${target}" >&2
+    return 1
+  fi
+  printf 'Set execute permissions on: %s\n' "${target}"
+
   # Create symlink directory if it doesn't exist
   if [[ ! -d "${SYMLINK_DIR}" ]]; then
     printf 'Creating directory: %s\n' "${SYMLINK_DIR}"
