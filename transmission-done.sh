@@ -239,6 +239,116 @@ run_filebot() {
   fi
 }
 
+# Log FileBot error with structured information and actionable suggestions
+log_filebot_error() {
+  local exit_code="$1"
+  local output="$2"
+  local source_dir="$3"
+  local database="${4:-auto-detect}"
+
+  log "=== FILEBOT ERROR REPORT ==="
+  log "Exit Code: ${exit_code}"
+  log "Database: ${database}"
+  log "Source Directory: ${source_dir}"
+
+  # List all files in source directory
+  log "Files in source directory:"
+  if [[ -d "${source_dir}" ]]; then
+    local file_list
+    file_list=$(find "${source_dir}" -type f 2>/dev/null || echo "Unable to list files")
+    if [[ -n "${file_list}" ]]; then
+      echo "${file_list}" | while IFS= read -r file; do
+        log "  - $(basename "${file}")"
+      done
+    else
+      log "  (no files found or unable to list)"
+    fi
+  else
+    log "  (directory does not exist)"
+  fi
+
+  # Analyze error patterns in output
+  log "Error Analysis:"
+
+  # Connection errors
+  if echo "${output}" | grep -iq "connection\|network\|timeout\|unreachable"; then
+    log "  ⚠ CONNECTION: Network/database connection issue detected"
+    log "    Suggestions:"
+    log "    - Check internet connectivity"
+    log "    - Verify database service is online (TheTVDB, TheMovieDB, etc.)"
+    log "    - Try again in a few minutes"
+  fi
+
+  # Permission errors
+  if echo "${output}" | grep -iq "permission\|denied\|cannot write\|read-only"; then
+    log "  ⚠ PERMISSION: File/directory permission issue detected"
+    log "    Suggestions:"
+    log "    - Check write permissions on: ${PLEX_MEDIA_PATH}"
+    log "    - Check read permissions on: ${source_dir}"
+    log "    - Verify user has access to both directories"
+  fi
+
+  # License errors
+  if echo "${output}" | grep -iq "license\|unregistered\|trial\|activation"; then
+    log "  ⚠ LICENSE: FileBot license issue detected"
+    log "    Suggestions:"
+    log "    - Verify FileBot is properly licensed"
+    log "    - Check license file location: ~/.filebot/license.txt"
+    log "    - Run: filebot --license to check status"
+  fi
+
+  # Identification errors
+  if echo "${output}" | grep -iq "unable to identify\|no match\|failed to fetch\|no results"; then
+    log "  ⚠ IDENTIFICATION: Media identification failed"
+    log "    Suggestions:"
+    log "    - Check filename follows naming conventions"
+    log "    - For TV: Include S##E## or ##x## pattern"
+    log "    - For Movies: Include year (YYYY)"
+    log "    - Try different database with --db flag"
+    log "    - Consider manual lookup on TVDB/TMDB"
+  fi
+
+  # Disk space
+  if echo "${output}" | grep -iq "no space\|disk full\|quota exceeded"; then
+    log "  ⚠ DISK SPACE: Insufficient disk space"
+    log "    Suggestions:"
+    log "    - Check available space: df -h ${PLEX_MEDIA_PATH}"
+    log "    - Free up space in destination"
+  fi
+
+  # Unknown error
+  if ! echo "${output}" | grep -iq "connection\|network\|timeout\|permission\|license\|identify\|space"; then
+    log "  ⚠ UNKNOWN: Error type not recognized"
+    log "    Suggestions:"
+    log "    - Review full FileBot output in log file"
+    log "    - Check FileBot documentation"
+    log "    - Verify FileBot installation: filebot --version"
+  fi
+
+  # Log excerpt of output (first/last few lines)
+  log "FileBot Output (excerpt):"
+  local line_count
+  line_count=$(echo "${output}" | wc -l)
+  if [[ ${line_count} -gt 20 ]]; then
+    log "  (First 10 lines)"
+    echo "${output}" | head -10 | while IFS= read -r line; do
+      log "  ${line}"
+    done
+    log "  ..."
+    log "  (Last 10 lines)"
+    echo "${output}" | tail -10 | while IFS= read -r line; do
+      log "  ${line}"
+    done
+  else
+    echo "${output}" | while IFS= read -r line; do
+      log "  ${line}"
+    done
+  fi
+
+  log "=== END ERROR REPORT ==="
+  return 0
+}
+
 check_disk_space() {
   local required_space=1000000 # 1GB in KB
 
