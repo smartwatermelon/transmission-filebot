@@ -113,7 +113,12 @@ log() {
   fi
   local timestamp
   timestamp=$(date '+%Y-%m-%d %H:%M:%S')
-  printf '[%s] %s\n' "${timestamp}" "$1" | tee -a "${LOG_FILE}"
+  # In test mode, only write to log file (don't output to stdout)
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    printf '[%s] %s\n' "${timestamp}" "$1" >>"${LOG_FILE}"
+  else
+    printf '[%s] %s\n' "${timestamp}" "$1" | tee -a "${LOG_FILE}"
+  fi
 }
 
 # Plex API functions
@@ -441,10 +446,12 @@ check_disk_space() {
 check_file_ready_quick() {
   local file="$1"
 
-  # Check 1: lsof - is file open by Transmission?
-  if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
-    log "File still open by Transmission: ${file}"
-    return 1
+  # Check 1: lsof - is file open by Transmission? (skip in test mode)
+  if [[ "${TEST_MODE}" != "true" ]]; then
+    if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
+      log "File still open by Transmission: ${file}"
+      return 1
+    fi
   fi
 
   # Check 2: .part marker
@@ -496,9 +503,13 @@ check_files_ready() {
     sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
   done <<<"${media_files}"
 
-  # Phase 2: Sleep once for entire batch
-  log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
-  sleep "${stability_seconds}"
+  # Phase 2: Sleep once for entire batch (reduced in test mode)
+  if [[ "${TEST_MODE}" == "true" ]]; then
+    log "Test mode: skipping stability sleep"
+  else
+    log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
+    sleep "${stability_seconds}"
+  fi
 
   # Phase 3: Check final sizes
   while IFS= read -r file; do
@@ -547,7 +558,10 @@ discover_and_filter_media_files() {
       ready_files="${ready_files}${file}"$'\n'
     else
       ((incomplete_count += 1))
-      if [[ "${include_incomplete}" == "false" ]]; then
+      if [[ "${include_incomplete}" == "true" ]]; then
+        log "Including incomplete: ${file}"
+        ready_files="${ready_files}${file}"$'\n'
+      else
         log "Filtered incomplete: ${file}"
       fi
     fi
