@@ -30,6 +30,9 @@ MAX_LOG_SIZE=0
 # Invocation mode tracking
 INVOCATION_MODE=""
 
+# Preview output storage
+LAST_PREVIEW_OUTPUT=""
+
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
@@ -391,6 +394,97 @@ process_movie() {
     >>"${LOG_FILE}" 2>&1
 }
 
+# Preview FileBot changes with dry-run
+preview_filebot_changes() {
+  local source_dir="$1"
+  local db="${2:-}"
+
+  log "Generating preview of changes"
+
+  # Build FileBot arguments
+  local filebot_args=(
+    -rename "${source_dir}"
+    --format "{plex}"
+    --output "${PLEX_MEDIA_PATH}"
+    -r
+    --conflict auto
+    -non-strict
+    --action test # DRY-RUN MODE
+  )
+
+  # Add database if specified
+  if [[ -n "${db}" ]]; then
+    filebot_args+=(--db "${db}")
+  fi
+
+  # Run FileBot in test mode
+  local preview_output preview_exit
+  preview_output=$(run_filebot "${filebot_args[@]}" 2>&1)
+  preview_exit=$?
+
+  if [[ ${preview_exit} -ne 0 ]]; then
+    log "Preview failed (exit ${preview_exit})"
+    log "${preview_output}"
+    return 1
+  fi
+
+  # Count files to process
+  local file_count
+  file_count=$(echo "${preview_output}" | grep -c "TEST:" || echo "0")
+
+  if [[ ${file_count} -eq 0 ]]; then
+    log "Warning: Preview shows no files to rename"
+    return 1
+  fi
+
+  log "Preview: ${file_count} files to process"
+  echo "${preview_output}" | grep "TEST:" | tee -a "${LOG_FILE}"
+
+  # Store output for confirmation step
+  LAST_PREVIEW_OUTPUT="${preview_output}"
+  log "Preview stored (${#LAST_PREVIEW_OUTPUT} bytes)"
+  return 0
+}
+
+# Confirm changes with user in manual mode
+confirm_changes() {
+  local summary="$1"
+
+  # Automated mode: skip confirmation
+  if [[ "${INVOCATION_MODE}" == "automated" ]]; then
+    log "Automated mode: proceeding without confirmation"
+    return 0
+  fi
+
+  # Manual mode: require confirmation
+  log "Manual mode: requesting user confirmation"
+
+  # Send notification if available
+  if command -v terminal-notifier &>/dev/null; then
+    terminal-notifier \
+      -title "FileBot Preview" \
+      -subtitle "${TR_TORRENT_NAME}" \
+      -message "${summary}" \
+      -sound "default" 2>/dev/null || true
+  fi
+
+  # Prompt for confirmation
+  printf '\n%s\n' "${summary}"
+  printf 'Proceed with these changes? [y/N]: '
+  read -r response
+
+  case "${response}" in
+    [yY][eE][sS] | [yY])
+      log "User confirmed: proceeding"
+      return 0
+      ;;
+    *)
+      log "User cancelled"
+      return 1
+      ;;
+  esac
+}
+
 process_media() {
   local source_dir="$1"
   local success=false
@@ -707,6 +801,14 @@ detect_invocation_mode() {
 # Prompt user for directory in manual mode
 prompt_for_directory() {
   local selected_dir=""
+
+  # In test mode, return a default directory without prompting
+  if [[ "${TEST_MODE:-false}" == "true" ]]; then
+    selected_dir="${HOME}/Movies/"
+    log "TEST MODE: Using default directory: ${selected_dir}"
+    echo "${selected_dir}"
+    return 0
+  fi
 
   # Try macOS native folder picker via osascript
   if command -v osascript &>/dev/null; then
