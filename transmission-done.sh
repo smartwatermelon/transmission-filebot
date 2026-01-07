@@ -726,8 +726,12 @@ detect_media_type_heuristic() {
 
   # Extract just the filenames (not full paths) for pattern matching
   # This prevents directory names from affecting detection
-  local filenames
-  filenames=$(echo "${media_files}" | xargs -n1 basename)
+  # Use while loop to properly handle filenames with spaces
+  local filenames=""
+  while IFS= read -r file; do
+    [[ -z "${file}" ]] && continue
+    filenames="${filenames}$(basename "${file}")"$'\n'
+  done <<<"${media_files}"
 
   log "Analyzing filenames: ${filenames}"
 
