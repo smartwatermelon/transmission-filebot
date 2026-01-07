@@ -16,7 +16,7 @@ A robust solution for automatically processing downloaded media files from Trans
   - xmlstarlet (`brew install xmlstarlet`)
   - curl (usually pre-installed on macOS)
 
-> **Note**: The setup wizard (`plex-token.sh`) can automatically install missing dependencies with your permission.
+> **Note**: The installation wizard (`install.sh`) can automatically install missing dependencies with your permission.
 
 ## Installation
 
@@ -27,10 +27,10 @@ A robust solution for automatically processing downloaded media files from Trans
    cd transmission-filebot
    ```
 
-2. Run the interactive setup wizard:
+2. Run the installation wizard:
 
    ```bash
-   ./plex-token.sh
+   ./install.sh
    ```
 
    The wizard will:
@@ -39,13 +39,10 @@ A robust solution for automatically processing downloaded media files from Trans
    - Guide you through obtaining a Plex authentication token
    - Display your Plex library sections to help choose the media path
    - Generate a complete configuration file at `~/.config/transmission-done/config.yml`
+   - Create a symlink at `~/.local/bin/transmission-done`
    - Back up any existing configuration with a timestamp
 
-3. Make the main script executable:
-
-   ```bash
-   chmod +x transmission-done.sh
-   ```
+That's it! The script is now installed and ready to use.
 
 ## Configuration
 
@@ -71,7 +68,7 @@ Configure Transmission to run the script automatically:
 - Go to Preferences (⌘,)
 - Navigate to the "Downloading" tab
 - Check "Run script when download completes"
-- Enter the full path to `transmission-done.sh`
+- Enter: `~/.local/bin/transmission-done` (or the full path shown during installation)
 
 ## How It Works
 
@@ -303,11 +300,12 @@ This project began as a simple "done-cleanup" script that removed unwanted files
   - 63 unit tests for individual functions
   - 47 integration tests for complete workflows
   - Continuous integration with GitHub Actions
-- **Setup Wizard (2026-01)**: Interactive `plex-token.sh` configuration tool
-  - Automatic dependency installation
-  - Plex server validation
+- **Unified Installer (2026-01)**: One-command installation with `install.sh`
+  - Automatic dependency installation with user consent
+  - Plex server validation and token configuration
   - Complete config file generation
   - Library introspection with proper XML parsing
+  - Automatic symlink creation to `~/.local/bin`
 
 The current version is a comprehensive media automation solution with proper error handling, logging, configuration management, and extensive testing capabilities.
 

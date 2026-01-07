@@ -5,8 +5,13 @@ set -euo pipefail
 IFS=$'\n\t'
 
 # Constants
+BASH_SOURCE_REALPATH="$(realpath "${BASH_SOURCE[0]}")"
+SCRIPT_DIR="$(dirname "${BASH_SOURCE_REALPATH}")"
+readonly SCRIPT_DIR
 readonly USER_CONFIG_DIR="${HOME}/.config/transmission-done"
 readonly USER_CONFIG="${USER_CONFIG_DIR}/config.yml"
+readonly SYMLINK_DIR="${HOME}/.local/bin"
+readonly SYMLINK_NAME="transmission-done"
 
 check_dependencies() {
   local missing_deps=()
@@ -289,9 +294,83 @@ EOF
   return 0
 }
 
+install_symlink() {
+  local target="${SCRIPT_DIR}/transmission-done.sh"
+  local symlink="${SYMLINK_DIR}/${SYMLINK_NAME}"
+
+  printf '\nInstalling symlink...\n'
+
+  # Verify target script exists
+  if [[ ! -f "${target}" ]]; then
+    printf 'Error: Target script not found: %s\n' "${target}" >&2
+    return 1
+  fi
+
+  # Ensure target script is executable
+  if ! chmod +x "${target}"; then
+    printf 'Error: Failed to set execute permissions on %s\n' "${target}" >&2
+    return 1
+  fi
+  printf 'Set execute permissions on: %s\n' "${target}"
+
+  # Create symlink directory if it doesn't exist
+  if [[ ! -d "${SYMLINK_DIR}" ]]; then
+    printf 'Creating directory: %s\n' "${SYMLINK_DIR}"
+    if ! mkdir -p "${SYMLINK_DIR}"; then
+      printf 'Error: Failed to create %s\n' "${SYMLINK_DIR}" >&2
+      return 1
+    fi
+  fi
+
+  # Check if symlink already exists
+  if [[ -L "${symlink}" ]]; then
+    local current_target
+    current_target=$(readlink "${symlink}")
+    if [[ "${current_target}" == "${target}" ]]; then
+      printf 'Symlink already exists and points to correct location.\n'
+      return 0
+    else
+      printf 'Existing symlink points to: %s\n' "${current_target}"
+      read -rp "Replace with new location? [y/N]: " replace
+      case "${replace}" in
+        [yY][eE][sS] | [yY])
+          if ! rm "${symlink}"; then
+            printf 'Error: Failed to remove existing symlink\n' >&2
+            return 1
+          fi
+          ;;
+        *)
+          printf 'Keeping existing symlink.\n'
+          return 0
+          ;;
+      esac
+    fi
+  elif [[ -e "${symlink}" ]]; then
+    printf 'Error: %s exists but is not a symlink\n' "${symlink}" >&2
+    return 1
+  fi
+
+  # Create the symlink
+  if ln -s "${target}" "${symlink}"; then
+    printf 'Symlink created: %s -> %s\n' "${symlink}" "${target}"
+  else
+    printf 'Error: Failed to create symlink\n' >&2
+    return 1
+  fi
+
+  # Check if SYMLINK_DIR is in PATH
+  if [[ ":${PATH}:" != *":${SYMLINK_DIR}:"* ]]; then
+    printf '\n⚠️  Warning: %s is not in your PATH\n' "${SYMLINK_DIR}"
+    printf 'Add this to your shell profile (~/.zshrc or ~/.bash_profile):\n'
+    printf "  export PATH=\"%s:\$PATH\"\n" "${SYMLINK_DIR}"
+  fi
+
+  return 0
+}
+
 main() {
   printf '==============================================\n'
-  printf 'Plex Configuration Setup for transmission-done\n'
+  printf 'Transmission-Plex Media Manager Installation\n'
   printf '==============================================\n'
 
   # Check dependencies first
@@ -321,19 +400,33 @@ main() {
   media_path=$(get_media_path) || exit 1
 
   # Write configuration file
-  if write_config "${plex_server}" "${token}" "${media_path}"; then
-    printf '\n==============================================\n'
-    printf 'Setup Complete!\n'
-    printf '==============================================\n'
-    printf 'Config location: %s\n' "${USER_CONFIG}"
-    printf '\nYou can now run transmission-done.sh\n'
-    printf '\nTo test the configuration:\n'
-    printf '  ./transmission-done.sh\n'
-    printf '  (It will prompt for a directory to process)\n'
-  else
+  if ! write_config "${plex_server}" "${token}" "${media_path}"; then
     printf 'Error: Failed to write configuration\n' >&2
     exit 1
   fi
+
+  # Install symlink
+  if ! install_symlink; then
+    printf '\nWarning: Symlink installation failed, but config was created successfully.\n' >&2
+    printf 'You can still use the script directly: %s/transmission-done.sh\n' "${SCRIPT_DIR}"
+  fi
+
+  # Success summary
+  printf '\n==============================================\n'
+  printf 'Installation Complete!\n'
+  printf '==============================================\n'
+  printf 'Config file: %s\n' "${USER_CONFIG}"
+  printf 'Script symlink: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}"
+  printf '\nNext steps:\n'
+  printf '1. Test the installation:\n'
+  printf '   transmission-done\n'
+  printf '   (It will prompt for a directory to process)\n'
+  printf '\n2. Configure Transmission:\n'
+  printf '   - Open Transmission Preferences\n'
+  printf '   - Go to "Downloading" tab\n'
+  printf '   - Enable "Run script when download completes"\n'
+  printf '   - Enter: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}"
+  printf '\n3. Download and enjoy!\n'
 }
 
 main "$@"
