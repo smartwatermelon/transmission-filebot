@@ -1,5 +1,7 @@
 # Transmission-Plex Media Manager
 
+[![CI Tests](https://github.com/smartwatermelon/transmission-filebot/actions/workflows/test.yml/badge.svg)](https://github.com/smartwatermelon/transmission-filebot/actions/workflows/test.yml)
+
 A robust solution for automatically processing downloaded media files from Transmission, organizing them with FileBot, and triggering Plex library updates. This project evolved from a simple cleanup script into a comprehensive media management solution.
 
 ## Prerequisites
