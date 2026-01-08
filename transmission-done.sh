@@ -1,8 +1,28 @@
 #!/usr/bin/env bash
-PATH=${PATH}:/usr/local/bin
 
-# Strict mode
-set -euo pipefail
+# Detect architecture and set Homebrew prefix BEFORE strict mode
+ARCH="$(arch)"
+case "${ARCH}" in
+  i386 | x86_64)
+    # Intel Macs (both old i386 and modern x86_64)
+    export HOMEBREW_PREFIX="/usr/local"
+    ;;
+  arm64)
+    # Apple Silicon Macs
+    export HOMEBREW_PREFIX="/opt/homebrew"
+    ;;
+  *)
+    printf 'Error: Unsupported architecture: %s\n' "${ARCH}" >&2
+    exit 1
+    ;;
+esac
+
+# Set PATH to include Homebrew and common locations
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:${HOMEBREW_PREFIX}/bin:/usr/local/bin"
+export PATH
+
+# Strict mode (without -e to allow error logging instead of immediate exit)
+set -uo pipefail
 IFS=$'\n\t'
 
 # Signal handling
@@ -12,13 +32,43 @@ trap 'log "Script interrupted"; exit 1' INT TERM
 TEST_MODE="${TEST_MODE:-false}"
 TEST_RUNNER="${TEST_RUNNER:-false}"
 
-# Constants
-BASH_SOURCE_REALPATH="$(realpath "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "${BASH_SOURCE_REALPATH}")"
+# Resolve symlinks to get real script location
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SCRIPT_SOURCE}" ]]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "${SCRIPT_SOURCE}")"
+  [[ ${SCRIPT_SOURCE} != /* ]] && SCRIPT_SOURCE="${SCRIPT_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
 readonly SCRIPT_DIR
+
+# Derive HOME from script path (assumes script is in user's home directory tree)
+if [[ "${SCRIPT_DIR}" =~ ^(/Users/[^/]+) ]]; then
+  DERIVED_HOME="${BASH_REMATCH[1]}"
+elif [[ "${SCRIPT_DIR}" =~ ^(/home/[^/]+) ]]; then
+  DERIVED_HOME="${BASH_REMATCH[1]}"
+else
+  # Fallback: try USER variable, then whoami, then generic default
+  if [[ -n "${USER:-}" ]]; then
+    DERIVED_HOME="/Users/${USER}"
+  else
+    # Use whoami as final fallback (works even in minimal environments)
+    DERIVED_HOME="/Users/$(whoami)"
+  fi
+fi
+
+# Use HOME if set and valid, otherwise use derived value
+EFFECTIVE_HOME="${HOME:-${DERIVED_HOME}}"
+readonly EFFECTIVE_HOME
+
+# Constants
 readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
-readonly USER_CONFIG="${HOME}/.config/transmission-done/config.yml"
+readonly USER_CONFIG="${EFFECTIVE_HOME}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v) # silent, fail on error, 10 second timeout, verbose
+
+# Dependency paths (use full paths to avoid PATH issues in Transmission environment)
+readonly YQ="${HOMEBREW_PREFIX}/bin/yq"
+readonly FILEBOT="${HOMEBREW_PREFIX}/bin/filebot"
 
 # Config vars
 PLEX_SERVER=""
@@ -36,7 +86,7 @@ LAST_PREVIEW_OUTPUT=""
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
-  if ! yq eval '.' "${config_file}" >/dev/null 2>&1; then
+  if ! "${YQ}" eval '.' "${config_file}" >/dev/null 2>&1; then
     printf 'Error: Invalid YAML in config file: %s\n' "${config_file}" >&2
     return 1
   fi
@@ -47,7 +97,7 @@ get_home_directory() {
   local config_file="$1"
   local default_home
 
-  default_home=$(yq eval '.paths.default_home' "${config_file}")
+  default_home=$("${YQ}" eval '.paths.default_home' "${config_file}")
   if [[ -z "${default_home}" ]]; then
     printf 'Error: default_home not set in config\n' >&2
     return 1
@@ -61,8 +111,8 @@ get_home_directory() {
 }
 
 read_config() {
-  if ! yq --version &>/dev/null; then
-    printf 'Error: yq required, not found in PATH.\nTry: brew install yq' >&2
+  if ! "${YQ}" --version &>/dev/null; then
+    printf 'Error: yq required at %s\nTry: brew install yq\n' "${YQ}" >&2
     return 1
   fi
 
@@ -81,9 +131,9 @@ read_config() {
   local effective_home
   effective_home=$(get_home_directory "${config_file}") || return 1
 
-  PLEX_SERVER=$(yq eval '.plex.server' "${config_file}")
-  PLEX_TOKEN=$(yq eval '.plex.token' "${config_file}")
-  PLEX_MEDIA_PATH=$(yq eval '.plex.media_path' "${config_file}")
+  PLEX_SERVER=$("${YQ}" eval '.plex.server' "${config_file}")
+  PLEX_TOKEN=$("${YQ}" eval '.plex.token' "${config_file}")
+  PLEX_MEDIA_PATH=$("${YQ}" eval '.plex.media_path' "${config_file}")
 
   local missing_values=()
   [[ -z "${PLEX_SERVER}" ]] && missing_values+=("plex.server")
@@ -96,9 +146,9 @@ read_config() {
   fi
 
   local log_path
-  log_path=$(yq eval '.logging.file' "${config_file}")
+  log_path=$("${YQ}" eval '.logging.file' "${config_file}")
   LOG_FILE="${effective_home}/${log_path}"
-  MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
+  MAX_LOG_SIZE=$("${YQ}" eval '.logging.max_size' "${config_file}")
 
   if [[ "${TEST_MODE}" != "true" ]]; then
     printf 'Using config file: %s\n' "${config_file}" >&2
@@ -193,9 +243,9 @@ check_dependencies() {
     fi
   done
 
-  # Check for FileBot (special case, might be in different locations)
-  if ! command -v filebot &>/dev/null && [[ ! -x "/usr/local/bin/filebot" ]]; then
-    missing_required+=("filebot")
+  # Check for FileBot using globally defined path
+  if [[ ! -x "${FILEBOT}" ]]; then
+    missing_required+=("filebot (expected at ${FILEBOT})")
     has_errors=true
   fi
 
@@ -316,8 +366,7 @@ run_filebot() {
 
     return 1
   else
-    local FILEBOT
-    FILEBOT="$(command -v filebot 2>/dev/null || echo "/usr/local/bin/filebot")"
+    # Use globally defined FILEBOT path
     "${FILEBOT}" "$@"
   fi
 }
@@ -446,26 +495,38 @@ check_disk_space() {
 check_file_ready_quick() {
   local file="$1"
 
+  log "  → Quick check starting for: $(basename "${file}")"
+
   # Check 1: lsof - is file open by Transmission? (skip in test mode)
   if [[ "${TEST_MODE}" != "true" ]]; then
-    if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
+    log "  → Running lsof check..."
+    local lsof_output=""
+    lsof_output=$(lsof -a -c transmission -w "${file}" 2>/dev/null || echo "")
+
+    log "  → lsof check complete (output: ${#lsof_output} bytes)"
+
+    # Only fail if lsof found the file is open
+    if [[ -n "${lsof_output}" ]] && echo "${lsof_output}" | grep -q "${file}"; then
       log "File still open by Transmission: ${file}"
       return 1
     fi
   fi
 
+  log "  → Checking for .part marker..."
   # Check 2: .part marker
   if [[ -f "${file}.part" ]]; then
     log "Incomplete marker found: ${file}.part"
     return 1
   fi
 
+  log "  → Checking for .incomplete marker..."
   # Check 3: .incomplete marker
   if [[ -f "${file}.incomplete" ]]; then
     log "Incomplete marker found: ${file}.incomplete"
     return 1
   fi
 
+  log "  → File passed all quick checks"
   return 0
 }
 
@@ -478,20 +539,30 @@ check_files_ready() {
 
   # Find all media files with corrected syntax
   local media_files
-  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null || true)
 
   if [[ -z "${media_files}" ]]; then
     log "Warning: No media files found in ${source_dir}"
     return 1
   fi
 
+  local file_count_preview
+  file_count_preview=$(echo "${media_files}" | grep -c . || echo "0")
+  log "Found ${file_count_preview} media files to validate"
+
   # Phase 1: Quick checks and initial sizes
+  # Note: Storage uses pipe delimiter which is rare but technically allowed in filenames
+  # If a filename contains '|', the extraction in Phase 3 will fail validation
   local file_count=0
   declare -A sizes_before
 
+  # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 3
+  # Both loops read from ${media_files}, use same IFS/read, and increment at same point
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
     ((file_count += 1))
+
+    log "Checking file ${file_count}/${file_count_preview}: $(basename "${file}")"
 
     # Quick checks (lsof + markers)
     if ! check_file_ready_quick "${file}"; then
@@ -504,9 +575,15 @@ check_files_ready() {
       log "File ready (test mode): ${file}"
     else
       # Record initial size
-      sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+      local file_size
+      file_size=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+
+      # Store size using array index (file paths may contain brackets)
+      sizes_before[${file_count}]="${file}|${file_size}"
     fi
   done <<<"${media_files}"
+
+  log "Completed phase 1: checked ${file_count} files"
 
   # In test mode, we're done after marker checks
   if [[ "${TEST_MODE}" == "true" ]]; then
@@ -519,14 +596,39 @@ check_files_ready() {
   sleep "${stability_seconds}"
 
   # Phase 3: Check final sizes
+  # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 1
+  # Any mismatch will be caught by the filepath validation below
+  local phase3_count=0
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
+    ((phase3_count += 1))
+
+    # Retrieve stored data (format: "filepath|size")
+    local stored_data="${sizes_before[${phase3_count}]}"
+
+    # Validate we have stored data for this index
+    if [[ -z "${stored_data}" ]]; then
+      log "ERROR: No stored data for index ${phase3_count} (file: ${file})"
+      return 1
+    fi
+
+    # Extract and validate stored filepath matches current file
+    local stored_path="${stored_data%|*}"
+    if [[ "${stored_path}" != "${file}" ]]; then
+      log "ERROR: File order mismatch at index ${phase3_count}"
+      log "  Expected: ${file}"
+      log "  Got:      ${stored_path}"
+      return 1
+    fi
+
+    # Extract stored size
+    local size_before="${stored_data#*|}"
 
     local size_after
     size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
 
-    if [[ "${sizes_before[${file}]}" != "${size_after}" ]]; then
-      log "File size changed: ${file} (${sizes_before[${file}]} → ${size_after} bytes)"
+    if [[ "${size_before}" != "${size_after}" ]]; then
+      log "File size changed: ${file} (${size_before} → ${size_after} bytes)"
       return 1
     fi
 
