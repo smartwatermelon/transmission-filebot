@@ -313,6 +313,8 @@ The current version is a comprehensive media automation solution with proper err
 
 Contributions are welcome! Please feel free to submit a Pull Request. For major changes, please open an issue first to discuss what you would like to change.
 
+Please ensure tests pass before submitting: `./run_tests.sh`
+
 ## License
 
 MIT License - See LICENSE file for details
