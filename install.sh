@@ -323,9 +323,20 @@ get_plex_library_info() {
     local section_detail location
     section_detail=$(curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections/${id}" 2>/dev/null || echo "")
 
+    if [[ -n "${DEBUG_MODE:-}" ]]; then
+      printf '[DEBUG] Section %s detail response length: %d bytes\n' "${id}" "${#section_detail}" >&2
+      if [[ -n "${section_detail}" ]]; then
+        printf '[DEBUG] Section %s XML (first 500 chars):\n%s\n' "${id}" "${section_detail:0:500}" >&2
+      fi
+    fi
+
     if [[ -n "${section_detail}" ]]; then
       # Extract path from first Location element
       location=$(echo "${section_detail}" | xmlstarlet sel -t -v "//Location[1]/@path" 2>/dev/null)
+
+      if [[ -n "${DEBUG_MODE:-}" ]]; then
+        printf '[DEBUG] Section %s extracted location: "%s"\n' "${id}" "${location}" >&2
+      fi
 
       if [[ -n "${location}" ]]; then
         printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}" >&2
