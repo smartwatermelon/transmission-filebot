@@ -643,15 +643,24 @@ preview_filebot_changes() {
   preview_output=$(run_filebot "${filebot_args[@]}" 2>&1)
   preview_exit=$?
 
-  if [[ ${preview_exit} -ne 0 ]]; then
-    log "Preview failed (exit ${preview_exit})"
-    log "${preview_output}"
-    return 1
-  fi
-
   # Count files to process
   local file_count
-  file_count=$(echo "${preview_output}" | grep -c "\[TEST\]" || echo "0")
+  file_count=$(echo "${preview_output}" | grep -c "\[TEST\]" 2>/dev/null || printf "0")
+  file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
+
+  # FileBot returns exit 1 when uncertain about database (TV vs Movie)
+  # but may still successfully show preview. Only fail if no files found.
+  if [[ ${preview_exit} -ne 0 ]]; then
+    log "Preview exited with code ${preview_exit}"
+
+    if [[ ${file_count} -eq 0 ]]; then
+      log "Preview failed - no files found"
+      log "${preview_output}"
+      return 1
+    fi
+
+    log "Preview succeeded despite exit code (${file_count} files found)"
+  fi
 
   if [[ ${file_count} -eq 0 ]]; then
     log "Warning: Preview shows no files to rename"
@@ -764,7 +773,8 @@ process_media_with_autodetect() {
 
   log "Attempting FileBot auto-detection (no database specified)"
 
-  run_filebot -rename "${source_dir}" \
+  local output exit_code
+  output=$(run_filebot -rename "${source_dir}" \
     --format "{plex}" \
     --output "${PLEX_MEDIA_PATH}" \
     -r \
@@ -772,7 +782,42 @@ process_media_with_autodetect() {
     -non-strict \
     --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
     --action move \
-    >>"${LOG_FILE}" 2>&1
+    2>&1)
+  exit_code=$?
+
+  # Log the output
+  echo "${output}" >>"${LOG_FILE}"
+
+  # In test mode with override, just check exit code
+  if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
+    return "${exit_code}"
+  fi
+
+  # Count files that were successfully moved
+  local file_count
+  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
+
+  # FileBot returns exit 1 when uncertain about database (TV vs Movie)
+  # but may still successfully move files. Only fail if no files were moved.
+  if [[ ${exit_code} -ne 0 ]]; then
+    log "Auto-detection exited with code ${exit_code}"
+
+    if [[ ${file_count} -eq 0 ]]; then
+      log "Auto-detection failed - no files moved"
+      return 1
+    fi
+
+    log "Auto-detection succeeded despite exit code (${file_count} files moved)"
+  fi
+
+  if [[ ${file_count} -eq 0 ]]; then
+    log "Warning: No files were moved"
+    return 1
+  fi
+
+  log "Auto-detection: ${file_count} files moved successfully"
+  return 0
 }
 
 # Process media with a specific database
@@ -782,7 +827,8 @@ process_with_database() {
 
   log "Attempting FileBot processing with database: ${database}"
 
-  run_filebot -rename "${source_dir}" \
+  local output exit_code
+  output=$(run_filebot -rename "${source_dir}" \
     --db "${database}" \
     --format "{plex}" \
     --output "${PLEX_MEDIA_PATH}" \
@@ -791,7 +837,41 @@ process_with_database() {
     -non-strict \
     --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
     --action move \
-    >>"${LOG_FILE}" 2>&1
+    2>&1)
+  exit_code=$?
+
+  # Log the output
+  echo "${output}" >>"${LOG_FILE}"
+
+  # In test mode with override, just check exit code
+  if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
+    return "${exit_code}"
+  fi
+
+  # Count files that were successfully moved
+  local file_count
+  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
+
+  # FileBot may return non-zero exit code even when files are moved successfully
+  if [[ ${exit_code} -ne 0 ]]; then
+    log "Database processing exited with code ${exit_code}"
+
+    if [[ ${file_count} -eq 0 ]]; then
+      log "Database processing failed - no files moved"
+      return 1
+    fi
+
+    log "Database processing succeeded despite exit code (${file_count} files moved)"
+  fi
+
+  if [[ ${file_count} -eq 0 ]]; then
+    log "Warning: No files were moved with database ${database}"
+    return 1
+  fi
+
+  log "Database processing (${database}): ${file_count} files moved successfully"
+  return 0
 }
 
 # Process with xattr cached metadata as last resort
@@ -800,15 +880,50 @@ process_with_xattr() {
 
   log "Attempting FileBot processing with xattr cache (last resort)"
 
+  local output exit_code
   # FileBot can use extended attributes cached from previous runs
-  run_filebot -rename "${source_dir}" \
+  output=$(run_filebot -rename "${source_dir}" \
     --format "{plex}" \
     --output "${PLEX_MEDIA_PATH}" \
     -r \
     --conflict auto \
     --apply artwork url metadata import subtitles finder date chmod prune clean thumbnail \
     --action move \
-    >>"${LOG_FILE}" 2>&1
+    2>&1)
+  exit_code=$?
+
+  # Log the output
+  echo "${output}" >>"${LOG_FILE}"
+
+  # In test mode with override, just check exit code
+  if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
+    return "${exit_code}"
+  fi
+
+  # Count files that were successfully moved
+  local file_count
+  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
+
+  # FileBot may return non-zero exit code even when files are moved successfully
+  if [[ ${exit_code} -ne 0 ]]; then
+    log "xattr processing exited with code ${exit_code}"
+
+    if [[ ${file_count} -eq 0 ]]; then
+      log "xattr processing failed - no files moved"
+      return 1
+    fi
+
+    log "xattr processing succeeded despite exit code (${file_count} files moved)"
+  fi
+
+  if [[ ${file_count} -eq 0 ]]; then
+    log "Warning: No files were moved with xattr cache"
+    return 1
+  fi
+
+  log "xattr processing: ${file_count} files moved successfully"
+  return 0
 }
 
 # Try TV show database chain
