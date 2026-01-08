@@ -477,37 +477,40 @@ get_media_path() {
       printf '[DEBUG] All paths are direct children of common root: %s\n' "${all_direct_children}" >&2
     fi
 
-    # Build options array
-    local -a options=()
+    # Build options arrays: display text and actual paths
+    local -a display_options=()
+    local -a actual_paths=()
 
     if [[ "${all_direct_children}" == "true" ]]; then
       # All paths share the same parent - only show common root
-      options+=("${common_root} (recommended)")
+      display_options+=("${common_root} (recommended)")
+      actual_paths+=("${common_root}")
     else
       # Multiple roots - show common root and individual paths
-      options+=("${common_root} (recommended - common root)")
+      display_options+=("${common_root} (recommended - common root)")
+      actual_paths+=("${common_root}")
       for path in "${lib_paths[@]}"; do
-        options+=("${path}")
+        display_options+=("${path}")
+        actual_paths+=("${path}")
       done
     fi
 
     printf '\nDetected Plex library paths:\n' >&2
     local i
-    for i in "${!options[@]}"; do
-      printf '  %d) %s\n' "$((i + 1))" "${options[i]}" >&2
+    for i in "${!display_options[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${display_options[i]}" >&2
     done
-    printf '  %d) Enter custom path\n' "$((${#options[@]} + 1))" >&2
+    printf '  %d) Enter custom path\n' "$((${#display_options[@]} + 1))" >&2
     printf '\n' >&2
 
-    read -rp "Select option [1-$((${#options[@]} + 1))]: " selection
+    read -rp "Select option [1-$((${#display_options[@]} + 1))]: " selection
 
     if [[ "${selection}" =~ ^[0-9]+$ ]]; then
-      if [[ "${selection}" -ge 1 && "${selection}" -le "${#options[@]}" ]]; then
-        # User selected an option (remove any description in parentheses)
-        media_path="${options[$((selection - 1))]}"
-        media_path="${media_path%% (*}"  # Strip " (recommended...)" suffix
+      if [[ "${selection}" -ge 1 && "${selection}" -le "${#display_options[@]}" ]]; then
+        # User selected an option - use actual path, not display text
+        media_path="${actual_paths[$((selection - 1))]}"
         printf 'Using: %s\n' "${media_path}" >&2
-      elif [[ "${selection}" -eq $((${#options[@]} + 1)) ]]; then
+      elif [[ "${selection}" -eq $((${#display_options[@]} + 1)) ]]; then
         # User selected custom path option
         printf '\n' >&2
         read -rp "Enter custom path: " media_path
