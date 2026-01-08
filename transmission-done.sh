@@ -564,9 +564,15 @@ check_files_ready() {
       log "File ready (test mode): ${file}"
     else
       # Record initial size
-      sizes_before["${file}"]=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+      log "  → Getting file size with stat..."
+      local file_size
+      file_size=$(stat -f%z "${file}" 2>/dev/null || echo "0")
+      log "  → File size: ${file_size} bytes"
+      sizes_before["${file}"]="${file_size}"
     fi
   done <<<"${media_files}"
+
+  log "Completed phase 1: checked ${file_count} files"
 
   # In test mode, we're done after marker checks
   if [[ "${TEST_MODE}" == "true" ]]; then
