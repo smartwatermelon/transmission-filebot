@@ -28,6 +28,11 @@ check_dependencies() {
     missing_brew_deps+=("xmlstarlet")
   fi
 
+  if ! command -v jq &>/dev/null; then
+    missing_deps+=("jq")
+    missing_brew_deps+=("jq")
+  fi
+
   if ! command -v curl &>/dev/null; then
     missing_deps+=("curl")
   fi
@@ -110,19 +115,152 @@ validate_plex_server() {
   return 0
 }
 
+get_credentials() {
+  local username password
+
+  printf 'Enter your Plex account credentials\n' >&2
+  read -rp "Plex username/email: " username
+
+  if [[ -z "${username}" ]]; then
+    printf 'Error: Username is required\n' >&2
+    return 1
+  fi
+
+  read -rsp "Plex password: " password
+  printf '\n' >&2
+
+  if [[ -z "${password}" ]]; then
+    printf 'Error: Password is required\n' >&2
+    return 1
+  fi
+
+  echo "${username}:${password}"
+}
+
+url_encode() {
+  local string="$1"
+  local encoded=""
+  local i char byte
+
+  for ((i = 0; i < ${#string}; i++)); do
+    char="${string:i:1}"
+    case "${char}" in
+      [a-zA-Z0-9.~_-]) encoded+="${char}" ;;
+      *)
+        printf -v byte '%%%02X' "'${char}"
+        encoded+="${byte}"
+        ;;
+    esac
+  done
+  echo "${encoded}"
+}
+
+fetch_token_from_plex() {
+  local credentials="$1"
+  local username password
+
+  # Extract username and password safely (handles colons in password)
+  username="${credentials%%:*}"
+  password="${credentials#*:}"
+
+  printf 'Authenticating with plex.tv...\n' >&2
+
+  # URL-encode credentials to avoid issues with special characters
+  local encoded_username encoded_password
+  encoded_username=$(url_encode "${username}")
+  encoded_password=$(url_encode "${password}")
+
+  # Get authentication token from plex.tv
+  # Pass credentials via stdin to avoid exposing them in process list
+  local auth_response
+  if ! auth_response=$(
+    curl -s -X POST 'https://plex.tv/users/sign_in.json' \
+      -H 'X-Plex-Client-Identifier: transmission-done-installer' \
+      -H 'X-Plex-Product: transmission-done' \
+      -H 'X-Plex-Version: 1.0' \
+      -H 'Content-Type: application/x-www-form-urlencoded' \
+      --data-binary @- <<EOF
+user[login]=${encoded_username}&user[password]=${encoded_password}
+EOF
+  ); then
+    printf 'Error: Network request failed\n' >&2
+    unset username password encoded_username encoded_password
+    return 1
+  fi
+
+  # Clear sensitive data from memory
+  unset username password encoded_username encoded_password
+
+  # Extract the authentication token using jq
+  local auth_token
+  if ! auth_token=$(echo "${auth_response}" | jq -r '.user.authToken' 2>/dev/null); then
+    printf 'Error: Failed to parse authentication response\n' >&2
+    printf 'Response: %s\n' "${auth_response}" >&2
+    return 1
+  fi
+
+  if [[ "${auth_token}" == "null" ]] || [[ -z "${auth_token}" ]]; then
+    printf 'Error: Authentication failed. Check your credentials.\n' >&2
+    # Try to extract error message from response
+    local error_msg
+    error_msg=$(echo "${auth_response}" | jq -r '.error // empty' 2>/dev/null)
+    if [[ -n "${error_msg}" ]]; then
+      printf 'Server error: %s\n' "${error_msg}" >&2
+    fi
+    return 1
+  fi
+
+  printf 'Authentication successful!\n' >&2
+  echo "${auth_token}"
+}
+
 get_plex_token() {
-  local token
+  local token choice
 
   printf '\nPlex Authentication Token\n' >&2
-  printf '  Option 1: Visit https://www.plex.tv/claim/ (expires in 4 minutes)\n' >&2
-  printf '  Option 2: Get from your Plex account at:\n' >&2
-  printf '            https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\n' >&2
+  printf '  Option 1: Automated - Enter Plex credentials (recommended)\n' >&2
+  printf '  Option 2: Manual - Enter existing token\n' >&2
   printf '\n' >&2
-  read -rsp "Enter your Plex token: " token
-  printf '\n' >&2
+  read -rp "Select option [1/2]: " choice
 
-  if [[ -z "${token}" ]]; then
-    printf 'Error: Token is required\n' >&2
+  case "${choice}" in
+    1)
+      # Automated: Get credentials and fetch token from plex.tv
+      local credentials
+      credentials=$(get_credentials) || return 1
+
+      token=$(fetch_token_from_plex "${credentials}") || {
+        unset credentials
+        return 1
+      }
+      unset credentials
+      ;;
+    2)
+      # Manual: User provides token directly
+      printf '\nGet your token from:\n' >&2
+      printf '  https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\n' >&2
+      printf '\n' >&2
+      read -rsp "Enter your Plex token: " token
+      printf '\n' >&2
+
+      if [[ -z "${token}" ]]; then
+        printf 'Error: Token is required\n' >&2
+        return 1
+      fi
+      ;;
+    *)
+      printf 'Invalid option. Please select 1 or 2.\n' >&2
+      return 1
+      ;;
+  esac
+
+  # Detect and warn about claim tokens
+  if [[ "${token}" == claim-* ]]; then
+    printf '\n⚠️  Warning: This appears to be a claim token (starts with "claim-")\n' >&2
+    printf 'Claim tokens from https://www.plex.tv/claim/ expire after 4 minutes\n' >&2
+    printf 'and are NOT valid for API authentication.\n' >&2
+    printf '\nPlease use Option 1 (automated) or get a permanent token from:\n' >&2
+    printf '  https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\n' >&2
     return 1
   fi
 

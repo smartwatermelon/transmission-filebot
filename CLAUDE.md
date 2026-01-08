@@ -256,6 +256,7 @@ All must be available in PATH:
 
 - **yq** (`brew install yq`) - YAML parsing, required for config
 - **xmlstarlet** (`brew install xmlstarlet`) - XML parsing for Plex API responses
+- **jq** (`brew install jq`) - JSON parsing for Plex API authentication
 - **curl** (pre-installed on macOS) - HTTP requests
 - **bats-core** (`brew install bats-core`) - Test framework
 - **filebot** (licensed) - Media organization engine
