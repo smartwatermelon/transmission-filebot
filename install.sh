@@ -599,7 +599,7 @@ plex:
   token: ${plex_token}
   media_path: ${media_path}
 logging:
-  file: .filebot/logs/transmission-processing.log
+  file: .local/state/transmission-processing.log
   max_size: 10485760  # 10MB
 EOF
 

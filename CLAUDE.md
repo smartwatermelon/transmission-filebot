@@ -175,7 +175,7 @@ chmod +x transmission-done.sh install.sh run_tests.sh
 
 ```bash
 # Watch processing logs in real-time
-tail -f ~/.filebot/logs/transmission-processing.log
+tail -f ~/.local/state/transmission-processing.log
 
 # Inspect Transmission environment (add to script temporarily)
 env > /tmp/transmission-env.log
@@ -195,7 +195,7 @@ plex:
   token: abc123xyz                # Obtained during install.sh
   media_path: /path/to/plex/media # Target directory for organized media
 logging:
-  file: .filebot/logs/transmission-processing.log  # Relative to home
+  file: .local/state/transmission-processing.log  # Relative to home
   max_size: 10485760  # Bytes (10MB) - triggers log rotation
 ```
 
