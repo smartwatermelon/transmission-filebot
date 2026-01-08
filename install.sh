@@ -172,6 +172,9 @@ get_plex_library_info() {
 
   printf 'Available library sections:\n' >&2
 
+  # Collect unique paths to stdout for caller
+  local -a paths=()
+
   # Iterate through each Directory element
   local i
   for ((i = 1; i <= section_count; i++)); do
@@ -192,6 +195,8 @@ get_plex_library_info() {
 
       if [[ -n "${location}" ]]; then
         printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}" >&2
+        # Collect path for return value
+        paths+=("${location}")
       else
         printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}" >&2
       fi
@@ -200,18 +205,72 @@ get_plex_library_info() {
     fi
   done
 
+  # Return unique paths to stdout (one per line)
+  if [[ ${#paths[@]} -gt 0 ]]; then
+    printf '%s\n' "${paths[@]}" | sort -u
+  fi
+
   return 0
 }
 
 get_media_path() {
+  local plex_server="$1"
+  local token="$2"
   local media_path
 
   printf '\nPlex Media Path\n' >&2
   printf '  This is the root path where FileBot will organize your media.\n' >&2
-  printf '  Example: /Users/yourname/Media\n' >&2
-  printf '  Example: /Volumes/Storage/PlexMedia\n' >&2
-  printf '\n' >&2
-  read -rp "Plex media path: " media_path
+
+  # Try to get paths from Plex library sections
+  local plex_paths
+  plex_paths=$(get_plex_library_info "${plex_server}" "${token}")
+  local get_plex_exit=$?
+
+  # If we got paths from Plex, present them as options
+  if [[ ${get_plex_exit} -eq 0 ]] && [[ -n "${plex_paths}" ]]; then
+    printf '\nDetected Plex library paths:\n' >&2
+
+    local -a path_array=()
+    while IFS= read -r path; do
+      [[ -n "${path}" ]] && path_array+=("${path}")
+    done <<<"${plex_paths}"
+
+    # Show numbered options
+    local i
+    for i in "${!path_array[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${path_array[i]}" >&2
+    done
+    printf '  %d) Enter custom path\n' "$((${#path_array[@]} + 1))" >&2
+    printf '\n' >&2
+
+    read -rp "Select option [1-$((${#path_array[@]} + 1))]: " selection
+
+    if [[ "${selection}" =~ ^[0-9]+$ ]]; then
+      if [[ "${selection}" -ge 1 && "${selection}" -le "${#path_array[@]}" ]]; then
+        # User selected a Plex path (options 1 to N)
+        media_path="${path_array[$((selection - 1))]}"
+        printf 'Using: %s\n' "${media_path}" >&2
+      elif [[ "${selection}" -eq $((${#path_array[@]} + 1)) ]]; then
+        # User selected custom path option (N+1)
+        printf '\n' >&2
+        read -rp "Enter custom path: " media_path
+      else
+        # Out of range number
+        printf 'Invalid selection. Enter custom path:\n' >&2
+        read -rp "Plex media path: " media_path
+      fi
+    else
+      # Non-numeric input
+      printf 'Invalid input. Enter custom path:\n' >&2
+      read -rp "Plex media path: " media_path
+    fi
+  else
+    # No Plex paths available, ask for manual entry
+    printf '  Example: /Users/yourname/Media\n' >&2
+    printf '  Example: /Volumes/Storage/PlexMedia\n' >&2
+    printf '\n' >&2
+    read -rp "Plex media path: " media_path
+  fi
 
   # Expand tilde to home directory
   media_path="${media_path/#\~/${HOME}}"
@@ -323,35 +382,25 @@ install_symlink() {
   fi
 
   # Check if symlink already exists
-  if [[ -L "${symlink}" ]]; then
-    local current_target
-    current_target=$(readlink "${symlink}")
-    if [[ "${current_target}" == "${target}" ]]; then
-      printf 'Symlink already exists and points to correct location.\n' >&2
-      return 0
+  if [[ -e "${symlink}" || -L "${symlink}" ]]; then
+    if [[ -L "${symlink}" ]]; then
+      local current_target
+      current_target=$(readlink "${symlink}")
+      if [[ "${current_target}" == "${target}" ]]; then
+        printf 'Symlink already exists and points to correct location.\n' >&2
+        return 0
+      else
+        printf 'Warning: Overwriting existing symlink (was: %s)\n' "${current_target}" >&2
+      fi
     else
-      printf 'Existing symlink points to: %s\n' "${current_target}" >&2
-      read -rp "Replace with new location? [y/N]: " replace
-      case "${replace}" in
-        [yY][eE][sS] | [yY])
-          if ! rm "${symlink}"; then
-            printf 'Error: Failed to remove existing symlink\n' >&2
-            return 1
-          fi
-          ;;
-        *)
-          printf 'Keeping existing symlink.\n' >&2
-          return 0
-          ;;
-      esac
+      # Regular file exists, not a symlink
+      printf 'Error: %s exists but is not a symlink (cannot overwrite)\n' "${symlink}" >&2
+      return 1
     fi
-  elif [[ -e "${symlink}" ]]; then
-    printf 'Error: %s exists but is not a symlink\n' "${symlink}" >&2
-    return 1
   fi
 
-  # Create the symlink
-  if ln -s "${target}" "${symlink}"; then
+  # Create or overwrite the symlink (using -f to force)
+  if ln -sf "${target}" "${symlink}"; then
     printf 'Symlink created: %s -> %s\n' "${symlink}" "${target}" >&2
   else
     printf 'Error: Failed to create symlink\n' >&2
@@ -392,12 +441,9 @@ main() {
   # Validate token works
   validate_token "${plex_server}" "${token}" || exit 1
 
-  # Show library info (best effort, don't fail if this doesn't work)
-  get_plex_library_info "${plex_server}" "${token}" || true
-
-  # Get media path
+  # Get media path (will query Plex library paths and offer as options)
   local media_path
-  media_path=$(get_media_path) || exit 1
+  media_path=$(get_media_path "${plex_server}" "${token}") || exit 1
 
   # Write configuration file
   if ! write_config "${plex_server}" "${token}" "${media_path}"; then
