@@ -19,8 +19,8 @@ esac
 PATH="/usr/bin:/bin:/usr/sbin:/sbin:${HOMEBREW_PREFIX}/bin:/usr/local/bin"
 export PATH
 
-# Strict mode
-set -euo pipefail
+# Strict mode (without -e to allow error logging instead of immediate exit)
+set -uo pipefail
 IFS=$'\n\t'
 
 # Signal handling
@@ -488,26 +488,38 @@ check_disk_space() {
 check_file_ready_quick() {
   local file="$1"
 
+  log "  → Quick check starting for: $(basename "${file}")"
+
   # Check 1: lsof - is file open by Transmission? (skip in test mode)
   if [[ "${TEST_MODE}" != "true" ]]; then
-    if lsof -a -c transmission -w "${file}" 2>/dev/null | grep -q "${file}"; then
+    log "  → Running lsof check..."
+    local lsof_output=""
+    lsof_output=$(lsof -a -c transmission -w "${file}" 2>/dev/null || echo "")
+
+    log "  → lsof check complete (output: ${#lsof_output} bytes)"
+
+    # Only fail if lsof found the file is open
+    if [[ -n "${lsof_output}" ]] && echo "${lsof_output}" | grep -q "${file}"; then
       log "File still open by Transmission: ${file}"
       return 1
     fi
   fi
 
+  log "  → Checking for .part marker..."
   # Check 2: .part marker
   if [[ -f "${file}.part" ]]; then
     log "Incomplete marker found: ${file}.part"
     return 1
   fi
 
+  log "  → Checking for .incomplete marker..."
   # Check 3: .incomplete marker
   if [[ -f "${file}.incomplete" ]]; then
     log "Incomplete marker found: ${file}.incomplete"
     return 1
   fi
 
+  log "  → File passed all quick checks"
   return 0
 }
 
@@ -520,12 +532,16 @@ check_files_ready() {
 
   # Find all media files with corrected syntax
   local media_files
-  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null)
+  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null || true)
 
   if [[ -z "${media_files}" ]]; then
     log "Warning: No media files found in ${source_dir}"
     return 1
   fi
+
+  local file_count_preview
+  file_count_preview=$(echo "${media_files}" | grep -c . || echo "0")
+  log "Found ${file_count_preview} media files to validate"
 
   # Phase 1: Quick checks and initial sizes
   local file_count=0
@@ -534,6 +550,8 @@ check_files_ready() {
   while IFS= read -r file; do
     [[ -z "${file}" ]] && continue
     ((file_count += 1))
+
+    log "Checking file ${file_count}/${file_count_preview}: $(basename "${file}")"
 
     # Quick checks (lsof + markers)
     if ! check_file_ready_quick "${file}"; then
