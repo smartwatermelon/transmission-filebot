@@ -83,9 +83,9 @@ check_dependencies() {
 get_plex_server() {
   local plex_server
 
-  printf '\nPlex Server URL\n'
-  printf '  Default: http://localhost:32400\n'
-  printf '  Or specify: http://YOUR_SERVER_IP:32400\n'
+  printf '\nPlex Server URL\n' >&2
+  printf '  Default: http://localhost:32400\n' >&2
+  printf '  Or specify: http://YOUR_SERVER_IP:32400\n' >&2
   read -rp "Plex server URL [http://localhost:32400]: " plex_server
 
   # Use default if empty
@@ -97,7 +97,7 @@ get_plex_server() {
 validate_plex_server() {
   local plex_server="$1"
 
-  printf 'Validating Plex server at %s...\n' "${plex_server}"
+  printf 'Validating Plex server at %s...\n' "${plex_server}" >&2
 
   # Try to connect to the identity endpoint without auth
   if ! curl -sf -m 5 "${plex_server}/identity" >/dev/null 2>&1; then
@@ -106,20 +106,20 @@ validate_plex_server() {
     return 1
   fi
 
-  printf 'Plex server is reachable.\n'
+  printf 'Plex server is reachable.\n' >&2
   return 0
 }
 
 get_plex_token() {
   local token
 
-  printf '\nPlex Authentication Token\n'
-  printf '  Option 1: Visit https://www.plex.tv/claim/ (expires in 4 minutes)\n'
-  printf '  Option 2: Get from your Plex account at:\n'
-  printf '            https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\n'
-  printf '\n'
+  printf '\nPlex Authentication Token\n' >&2
+  printf '  Option 1: Visit https://www.plex.tv/claim/ (expires in 4 minutes)\n' >&2
+  printf '  Option 2: Get from your Plex account at:\n' >&2
+  printf '            https://support.plex.tv/articles/204059436-finding-an-authentication-token-x-plex-token/\n' >&2
+  printf '\n' >&2
   read -rsp "Enter your Plex token: " token
-  printf '\n'
+  printf '\n' >&2
 
   if [[ -z "${token}" ]]; then
     printf 'Error: Token is required\n' >&2
@@ -133,7 +133,7 @@ validate_token() {
   local plex_server="$1"
   local token="$2"
 
-  printf 'Validating token with Plex server...\n'
+  printf 'Validating token with Plex server...\n' >&2
 
   # Test the token by making an authenticated request
   if ! curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/identity" >/dev/null 2>&1; then
@@ -142,7 +142,7 @@ validate_token() {
     return 1
   fi
 
-  printf 'Token validated successfully.\n'
+  printf 'Token validated successfully.\n' >&2
   return 0
 }
 
@@ -150,7 +150,7 @@ get_plex_library_info() {
   local plex_server="$1"
   local token="$2"
 
-  printf '\nQuerying Plex library sections...\n'
+  printf '\nQuerying Plex library sections...\n' >&2
 
   local response
   if ! response=$(curl -sf -m 10 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections" 2>&1); then
@@ -170,7 +170,7 @@ get_plex_library_info() {
     return 1
   fi
 
-  printf 'Available library sections:\n'
+  printf 'Available library sections:\n' >&2
 
   # Iterate through each Directory element
   local i
@@ -191,12 +191,12 @@ get_plex_library_info() {
       location=$(echo "${section_detail}" | xmlstarlet sel -t -v "//Location[1]/@path" 2>/dev/null)
 
       if [[ -n "${location}" ]]; then
-        printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}"
+        printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}" >&2
       else
-        printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}"
+        printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}" >&2
       fi
     else
-      printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}"
+      printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}" >&2
     fi
   done
 
@@ -206,11 +206,11 @@ get_plex_library_info() {
 get_media_path() {
   local media_path
 
-  printf '\nPlex Media Path\n'
-  printf '  This is the root path where FileBot will organize your media.\n'
-  printf '  Example: /Users/yourname/Media\n'
-  printf '  Example: /Volumes/Storage/PlexMedia\n'
-  printf '\n'
+  printf '\nPlex Media Path\n' >&2
+  printf '  This is the root path where FileBot will organize your media.\n' >&2
+  printf '  Example: /Users/yourname/Media\n' >&2
+  printf '  Example: /Volumes/Storage/PlexMedia\n' >&2
+  printf '\n' >&2
   read -rp "Plex media path: " media_path
 
   # Expand tilde to home directory
@@ -231,7 +231,7 @@ get_media_path() {
           printf 'Error: Failed to create directory\n' >&2
           return 1
         fi
-        printf 'Directory created.\n'
+        printf 'Directory created.\n' >&2
         ;;
       *)
         printf 'Error: Media path must exist\n' >&2
@@ -256,7 +256,7 @@ write_config() {
 
   # Create config directory if it doesn't exist
   if [[ ! -d "${USER_CONFIG_DIR}" ]]; then
-    printf 'Creating config directory: %s\n' "${USER_CONFIG_DIR}"
+    printf 'Creating config directory: %s\n' "${USER_CONFIG_DIR}" >&2
     mkdir -p "${USER_CONFIG_DIR}"
   fi
 
@@ -264,12 +264,12 @@ write_config() {
   if [[ -f "${USER_CONFIG}" ]]; then
     local backup
     backup="${USER_CONFIG}.backup.$(date +%Y%m%d_%H%M%S)"
-    printf 'Backing up existing config to: %s\n' "${backup}"
+    printf 'Backing up existing config to: %s\n' "${backup}" >&2
     cp "${USER_CONFIG}" "${backup}"
   fi
 
   # Write new config
-  printf 'Writing config to: %s\n' "${USER_CONFIG}"
+  printf 'Writing config to: %s\n' "${USER_CONFIG}" >&2
   cat >"${USER_CONFIG}" <<EOF
 ---
 version: 1.0
@@ -290,7 +290,7 @@ EOF
     return 1
   fi
 
-  printf 'Config file written successfully.\n'
+  printf 'Config file written successfully.\n' >&2
   return 0
 }
 
@@ -298,7 +298,7 @@ install_symlink() {
   local target="${SCRIPT_DIR}/transmission-done.sh"
   local symlink="${SYMLINK_DIR}/${SYMLINK_NAME}"
 
-  printf '\nInstalling symlink...\n'
+  printf '\nInstalling symlink...\n' >&2
 
   # Verify target script exists
   if [[ ! -f "${target}" ]]; then
@@ -311,11 +311,11 @@ install_symlink() {
     printf 'Error: Failed to set execute permissions on %s\n' "${target}" >&2
     return 1
   fi
-  printf 'Set execute permissions on: %s\n' "${target}"
+  printf 'Set execute permissions on: %s\n' "${target}" >&2
 
   # Create symlink directory if it doesn't exist
   if [[ ! -d "${SYMLINK_DIR}" ]]; then
-    printf 'Creating directory: %s\n' "${SYMLINK_DIR}"
+    printf 'Creating directory: %s\n' "${SYMLINK_DIR}" >&2
     if ! mkdir -p "${SYMLINK_DIR}"; then
       printf 'Error: Failed to create %s\n' "${SYMLINK_DIR}" >&2
       return 1
@@ -327,10 +327,10 @@ install_symlink() {
     local current_target
     current_target=$(readlink "${symlink}")
     if [[ "${current_target}" == "${target}" ]]; then
-      printf 'Symlink already exists and points to correct location.\n'
+      printf 'Symlink already exists and points to correct location.\n' >&2
       return 0
     else
-      printf 'Existing symlink points to: %s\n' "${current_target}"
+      printf 'Existing symlink points to: %s\n' "${current_target}" >&2
       read -rp "Replace with new location? [y/N]: " replace
       case "${replace}" in
         [yY][eE][sS] | [yY])
@@ -340,7 +340,7 @@ install_symlink() {
           fi
           ;;
         *)
-          printf 'Keeping existing symlink.\n'
+          printf 'Keeping existing symlink.\n' >&2
           return 0
           ;;
       esac
@@ -352,7 +352,7 @@ install_symlink() {
 
   # Create the symlink
   if ln -s "${target}" "${symlink}"; then
-    printf 'Symlink created: %s -> %s\n' "${symlink}" "${target}"
+    printf 'Symlink created: %s -> %s\n' "${symlink}" "${target}" >&2
   else
     printf 'Error: Failed to create symlink\n' >&2
     return 1
@@ -360,18 +360,18 @@ install_symlink() {
 
   # Check if SYMLINK_DIR is in PATH
   if [[ ":${PATH}:" != *":${SYMLINK_DIR}:"* ]]; then
-    printf '\n⚠️  Warning: %s is not in your PATH\n' "${SYMLINK_DIR}"
-    printf 'Add this to your shell profile (~/.zshrc or ~/.bash_profile):\n'
-    printf "  export PATH=\"%s:\$PATH\"\n" "${SYMLINK_DIR}"
+    printf '\n⚠️  Warning: %s is not in your PATH\n' "${SYMLINK_DIR}" >&2
+    printf 'Add this to your shell profile (~/.zshrc or ~/.bash_profile):\n' >&2
+    printf "  export PATH=\"%s:\$PATH\"\n" "${SYMLINK_DIR}" >&2
   fi
 
   return 0
 }
 
 main() {
-  printf '==============================================\n'
-  printf 'Transmission-Plex Media Manager Installation\n'
-  printf '==============================================\n'
+  printf '==============================================\n' >&2
+  printf 'Transmission-Plex Media Manager Installation\n' >&2
+  printf '==============================================\n' >&2
 
   # Check dependencies first
   if ! check_dependencies; then
@@ -408,25 +408,25 @@ main() {
   # Install symlink
   if ! install_symlink; then
     printf '\nWarning: Symlink installation failed, but config was created successfully.\n' >&2
-    printf 'You can still use the script directly: %s/transmission-done.sh\n' "${SCRIPT_DIR}"
+    printf 'You can still use the script directly: %s/transmission-done.sh\n' "${SCRIPT_DIR}" >&2
   fi
 
   # Success summary
-  printf '\n==============================================\n'
-  printf 'Installation Complete!\n'
-  printf '==============================================\n'
-  printf 'Config file: %s\n' "${USER_CONFIG}"
-  printf 'Script symlink: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}"
-  printf '\nNext steps:\n'
-  printf '1. Test the installation:\n'
-  printf '   transmission-done\n'
-  printf '   (It will prompt for a directory to process)\n'
-  printf '\n2. Configure Transmission:\n'
-  printf '   - Open Transmission Preferences\n'
-  printf '   - Go to "Downloading" tab\n'
-  printf '   - Enable "Run script when download completes"\n'
-  printf '   - Enter: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}"
-  printf '\n3. Download and enjoy!\n'
+  printf '\n==============================================\n' >&2
+  printf 'Installation Complete!\n' >&2
+  printf '==============================================\n' >&2
+  printf 'Config file: %s\n' "${USER_CONFIG}" >&2
+  printf 'Script symlink: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}" >&2
+  printf '\nNext steps:\n' >&2
+  printf '1. Test the installation:\n' >&2
+  printf '   transmission-done\n' >&2
+  printf '   (It will prompt for a directory to process)\n' >&2
+  printf '\n2. Configure Transmission:\n' >&2
+  printf '   - Open Transmission Preferences\n' >&2
+  printf '   - Go to "Downloading" tab\n' >&2
+  printf '   - Enable "Run script when download completes"\n' >&2
+  printf '   - Enter: %s/%s\n' "${SYMLINK_DIR}" "${SYMLINK_NAME}" >&2
+  printf '\n3. Download and enjoy!\n' >&2
 }
 
 main "$@"
