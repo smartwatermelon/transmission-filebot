@@ -549,13 +549,10 @@ check_files_ready() {
   local file_count=0
   declare -A sizes_before
 
-  log "[DEBUG] Starting while loop to process files"
   # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 3
   # Both loops read from ${media_files}, use same IFS/read, and increment at same point
   while IFS= read -r file; do
-    log "  [DEBUG] Loop iteration - file variable: '${file}'"
     [[ -z "${file}" ]] && continue
-    log "  [DEBUG] File is not empty, incrementing counter"
     ((file_count += 1))
 
     log "Checking file ${file_count}/${file_count_preview}: $(basename "${file}")"
@@ -571,17 +568,12 @@ check_files_ready() {
       log "File ready (test mode): ${file}"
     else
       # Record initial size
-      log "  → Getting file size with stat..."
       local file_size
       file_size=$(stat -f%z "${file}" 2>/dev/null || echo "0")
-      log "  → File size: ${file_size} bytes"
 
       # Store size using array index (file paths may contain brackets)
-      log "  [DEBUG] Attempting to store size in array..."
       sizes_before[${file_count}]="${file}|${file_size}"
-      log "  [DEBUG] Stored size for file, continuing to next iteration"
     fi
-    log "  [DEBUG] End of loop iteration for file ${file_count}"
   done <<<"${media_files}"
 
   log "Completed phase 1: checked ${file_count} files"
@@ -593,22 +585,16 @@ check_files_ready() {
   fi
 
   # Phase 2: Sleep once for entire batch
-  log "[DEBUG] Phase 2: Starting stability sleep"
   log "Sleeping ${stability_seconds}s to verify file stability (${file_count} files)"
   sleep "${stability_seconds}"
-  log "[DEBUG] Sleep completed"
 
   # Phase 3: Check final sizes
   # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 1
-  # Any mismatch will be caught by the filepath validation below (line ~621)
-  log "[DEBUG] Phase 3: Checking final sizes"
+  # Any mismatch will be caught by the filepath validation below
   local phase3_count=0
   while IFS= read -r file; do
-    log "  [DEBUG] Phase 3 iteration - file: '${file}'"
     [[ -z "${file}" ]] && continue
     ((phase3_count += 1))
-
-    log "  [DEBUG] Checking final size for file ${phase3_count}"
 
     # Retrieve stored data (format: "filepath|size")
     local stored_data="${sizes_before[${phase3_count}]}"
@@ -633,7 +619,6 @@ check_files_ready() {
 
     local size_after
     size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
-    log "  [DEBUG] Size after: ${size_after}, size before: ${size_before}"
 
     if [[ "${size_before}" != "${size_after}" ]]; then
       log "File size changed: ${file} (${size_before} → ${size_after} bytes)"
@@ -643,7 +628,6 @@ check_files_ready() {
     log "File ready: ${file} (${size_after} bytes)"
   done <<<"${media_files}"
 
-  log "[DEBUG] Phase 3 complete, processed ${phase3_count} files"
   log "All ${file_count} files validated and ready"
   return 0
 }
@@ -1156,28 +1140,22 @@ process_media() {
   log "Processing media in ${source_dir}"
 
   # Step 1: Check disk space
-  log "[DEBUG] Step 1: Checking disk space"
   if ! check_disk_space; then
     log "Error: Disk space check failed"
     return 1
   fi
-  log "[DEBUG] Disk space check passed"
 
   # Step 2: Verify files are ready (not being downloaded)
-  log "[DEBUG] Step 2: Calling check_files_ready"
   if ! check_files_ready "${source_dir}" 10; then
     log "Error: Files not ready for processing (still downloading or locked)"
     return 1
   fi
-  log "[DEBUG] check_files_ready returned success"
 
   # Step 3: Preview changes with dry-run
-  log "[DEBUG] Step 3: Previewing FileBot changes"
   if ! preview_filebot_changes "${source_dir}"; then
     log "Error: Preview failed - cannot determine what changes would be made"
     return 1
   fi
-  log "[DEBUG] Preview completed successfully"
 
   # Step 4: Confirm changes with user (manual mode only)
   local file_count
