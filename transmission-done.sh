@@ -547,8 +547,11 @@ check_files_ready() {
   local file_count=0
   declare -A sizes_before
 
+  log "[DEBUG] Starting while loop to process files"
   while IFS= read -r file; do
+    log "  [DEBUG] Loop iteration - file variable: '${file}'"
     [[ -z "${file}" ]] && continue
+    log "  [DEBUG] File is not empty, incrementing counter"
     ((file_count += 1))
 
     log "Checking file ${file_count}/${file_count_preview}: $(basename "${file}")"
@@ -569,7 +572,9 @@ check_files_ready() {
       file_size=$(stat -f%z "${file}" 2>/dev/null || echo "0")
       log "  → File size: ${file_size} bytes"
       sizes_before["${file}"]="${file_size}"
+      log "  [DEBUG] Stored size for file, continuing to next iteration"
     fi
+    log "  [DEBUG] End of loop iteration for file ${file_count}"
   done <<<"${media_files}"
 
   log "Completed phase 1: checked ${file_count} files"
