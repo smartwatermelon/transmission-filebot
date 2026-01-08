@@ -409,11 +409,17 @@ find_common_root() {
   # Build common root from components
   local common_root=""
   for ((i = 0; i < common_depth; i++)); do
-    if [[ ${i} -eq 0 && -z "${components[i]}" ]]; then
+    if [[ -z "${components[i]}" ]]; then
+      # Empty component (from leading /) - start with "/"
       common_root="/"
-    elif [[ ${i} -eq 0 ]]; then
+    elif [[ "${common_root}" == "/" ]]; then
+      # Already have "/", append component without extra slash
+      common_root="/${components[i]}"
+    elif [[ -z "${common_root}" ]]; then
+      # First non-empty component
       common_root="${components[i]}"
     else
+      # Append with separator
       common_root="${common_root}/${components[i]}"
     fi
   done
@@ -456,13 +462,34 @@ get_media_path() {
       printf '[DEBUG] Common root: %s\n' "${common_root}" >&2
     fi
 
-    # Build options array: common root first, then individual paths, then custom
-    local -a options=()
-    options+=("${common_root} (recommended - common root)")
-
+    # Check if all paths are direct children of common root
+    local all_direct_children=true
     for path in "${lib_paths[@]}"; do
-      options+=("${path}")
+      local parent
+      parent=$(dirname "${path}")
+      if [[ "${parent}" != "${common_root}" ]]; then
+        all_direct_children=false
+        break
+      fi
     done
+
+    if [[ -n "${DEBUG_MODE:-}" ]]; then
+      printf '[DEBUG] All paths are direct children of common root: %s\n' "${all_direct_children}" >&2
+    fi
+
+    # Build options array
+    local -a options=()
+
+    if [[ "${all_direct_children}" == "true" ]]; then
+      # All paths share the same parent - only show common root
+      options+=("${common_root} (recommended)")
+    else
+      # Multiple roots - show common root and individual paths
+      options+=("${common_root} (recommended - common root)")
+      for path in "${lib_paths[@]}"; do
+        options+=("${path}")
+      done
+    fi
 
     printf '\nDetected Plex library paths:\n' >&2
     local i
