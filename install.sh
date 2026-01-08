@@ -292,6 +292,11 @@ get_plex_library_info() {
     return 1
   fi
 
+  if [[ -n "${DEBUG_MODE:-}" ]]; then
+    printf '[DEBUG] Main /library/sections response length: %d bytes\n' "${#response}" >&2
+    printf '[DEBUG] Main response (first 1000 chars):\n%s\n' "${response:0:1000}" >&2
+  fi
+
   # Parse XML with xmlstarlet
   local section_count
   if ! section_count=$(echo "${response}" | xmlstarlet sel -t -v "count(//Directory)" 2>/dev/null); then
@@ -312,39 +317,46 @@ get_plex_library_info() {
   # Iterate through each Directory element
   local i
   for ((i = 1; i <= section_count; i++)); do
-    local id type title
+    local id type title location
     id=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@key" 2>/dev/null)
     type=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@type" 2>/dev/null)
     title=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/@title" 2>/dev/null)
 
     [[ -z "${id}" ]] && continue
 
-    # Get location for this section
-    local section_detail location
-    section_detail=$(curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections/${id}" 2>/dev/null || echo "")
+    # Try to extract location from main response first (Location is a child of Directory)
+    location=$(echo "${response}" | xmlstarlet sel -t -v "//Directory[${i}]/Location[1]/@path" 2>/dev/null)
 
     if [[ -n "${DEBUG_MODE:-}" ]]; then
-      printf '[DEBUG] Section %s detail response length: %d bytes\n' "${id}" "${#section_detail}" >&2
+      printf '[DEBUG] Section %s (%s) location from main response: "%s"\n' "${id}" "${title}" "${location}" >&2
+    fi
+
+    # If location is empty, try the detail endpoint (fallback)
+    if [[ -z "${location}" ]]; then
+      local section_detail
+      section_detail=$(curl -sf -m 5 -H "X-Plex-Token: ${token}" "${plex_server}/library/sections/${id}" 2>/dev/null || echo "")
+
+      if [[ -n "${DEBUG_MODE:-}" ]]; then
+        printf '[DEBUG] Section %s detail response length: %d bytes\n' "${id}" "${#section_detail}" >&2
+        if [[ -n "${section_detail}" ]]; then
+          printf '[DEBUG] Section %s detail XML (first 500 chars):\n%s\n' "${id}" "${section_detail:0:500}" >&2
+        fi
+      fi
+
       if [[ -n "${section_detail}" ]]; then
-        printf '[DEBUG] Section %s XML (first 500 chars):\n%s\n' "${id}" "${section_detail:0:500}" >&2
+        location=$(echo "${section_detail}" | xmlstarlet sel -t -v "//Location[1]/@path" 2>/dev/null)
+
+        if [[ -n "${DEBUG_MODE:-}" ]]; then
+          printf '[DEBUG] Section %s location from detail: "%s"\n' "${id}" "${location}" >&2
+        fi
       fi
     fi
 
-    if [[ -n "${section_detail}" ]]; then
-      # Extract path from first Location element
-      location=$(echo "${section_detail}" | xmlstarlet sel -t -v "//Location[1]/@path" 2>/dev/null)
-
-      if [[ -n "${DEBUG_MODE:-}" ]]; then
-        printf '[DEBUG] Section %s extracted location: "%s"\n' "${id}" "${location}" >&2
-      fi
-
-      if [[ -n "${location}" ]]; then
-        printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}" >&2
-        # Collect path for return value
-        paths+=("${location}")
-      else
-        printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}" >&2
-      fi
+    # Display and collect results
+    if [[ -n "${location}" ]]; then
+      printf '  [%s] %s (%s): %s\n' "${id}" "${title}" "${type}" "${location}" >&2
+      # Collect path for return value
+      paths+=("${location}")
     else
       printf '  [%s] %s (%s)\n' "${id}" "${title}" "${type}" >&2
     fi
