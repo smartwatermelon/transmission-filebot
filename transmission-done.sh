@@ -643,15 +643,23 @@ preview_filebot_changes() {
   preview_output=$(run_filebot "${filebot_args[@]}" 2>&1)
   preview_exit=$?
 
-  if [[ ${preview_exit} -ne 0 ]]; then
-    log "Preview failed (exit ${preview_exit})"
-    log "${preview_output}"
-    return 1
-  fi
-
   # Count files to process
   local file_count
   file_count=$(echo "${preview_output}" | grep -c "\[TEST\]" || echo "0")
+
+  # FileBot returns exit 1 when uncertain about database (TV vs Movie)
+  # but may still successfully show preview. Only fail if no files found.
+  if [[ ${preview_exit} -ne 0 ]]; then
+    log "Preview exited with code ${preview_exit}"
+
+    if [[ ${file_count} -eq 0 ]]; then
+      log "Preview failed - no files found"
+      log "${preview_output}"
+      return 1
+    fi
+
+    log "Preview succeeded despite exit code (${file_count} files found)"
+  fi
 
   if [[ ${file_count} -eq 0 ]]; then
     log "Warning: Preview shows no files to rename"
