@@ -3,10 +3,12 @@
 # Detect architecture and set Homebrew prefix BEFORE strict mode
 ARCH="$(arch)"
 case "${ARCH}" in
-  i386)
+  i386 | x86_64)
+    # Intel Macs (both old i386 and modern x86_64)
     export HOMEBREW_PREFIX="/usr/local"
     ;;
   arm64)
+    # Apple Silicon Macs
     export HOMEBREW_PREFIX="/opt/homebrew"
     ;;
   *)
@@ -46,8 +48,13 @@ if [[ "${SCRIPT_DIR}" =~ ^(/Users/[^/]+) ]]; then
 elif [[ "${SCRIPT_DIR}" =~ ^(/home/[^/]+) ]]; then
   DERIVED_HOME="${BASH_REMATCH[1]}"
 else
-  # Fallback to USER-based home
-  DERIVED_HOME="/Users/${USER}"
+  # Fallback: try USER variable, then whoami, then generic default
+  if [[ -n "${USER:-}" ]]; then
+    DERIVED_HOME="/Users/${USER}"
+  else
+    # Use whoami as final fallback (works even in minimal environments)
+    DERIVED_HOME="/Users/$(whoami)"
+  fi
 fi
 
 # Use HOME if set and valid, otherwise use derived value
