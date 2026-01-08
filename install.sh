@@ -4,6 +4,10 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+# Debug mode: Set DEBUG_MODE=1 to enable verbose logging including credentials
+# Example: DEBUG_MODE=1 ./install.sh
+# WARNING: Debug mode will print passwords to stderr - only use for troubleshooting
+
 # Constants
 BASH_SOURCE_REALPATH="$(realpath "${BASH_SOURCE[0]}")"
 SCRIPT_DIR="$(dirname "${BASH_SOURCE_REALPATH}")"
@@ -137,24 +141,6 @@ get_credentials() {
   echo "${username}:${password}"
 }
 
-url_encode() {
-  local string="$1"
-  local encoded=""
-  local i char byte
-
-  for ((i = 0; i < ${#string}; i++)); do
-    char="${string:i:1}"
-    case "${char}" in
-      [a-zA-Z0-9.~_-]) encoded+="${char}" ;;
-      *)
-        printf -v byte '%%%02X' "'${char}"
-        encoded+="${byte}"
-        ;;
-    esac
-  done
-  echo "${encoded}"
-}
-
 fetch_token_from_plex() {
   local credentials="$1"
   local username password
@@ -163,33 +149,43 @@ fetch_token_from_plex() {
   username="${credentials%%:*}"
   password="${credentials#*:}"
 
+  if [[ -n "${DEBUG_MODE:-}" ]]; then
+    printf '[DEBUG] Username: %s\n' "${username}" >&2
+    printf '[DEBUG] Password length: %d characters\n' "${#password}" >&2
+    printf '[DEBUG] Calling plex.tv API...\n' >&2
+  fi
+
   printf 'Authenticating with plex.tv...\n' >&2
 
-  # URL-encode credentials to avoid issues with special characters
-  local encoded_username encoded_password
-  encoded_username=$(url_encode "${username}")
-  encoded_password=$(url_encode "${password}")
-
   # Get authentication token from plex.tv
-  # Pass credentials via stdin to avoid exposing them in process list
+  # Using original plex-token.sh method with --data-urlencode
   local auth_response
-  if ! auth_response=$(
-    curl -s -X POST 'https://plex.tv/users/sign_in.json' \
-      -H 'X-Plex-Client-Identifier: transmission-done-installer' \
-      -H 'X-Plex-Product: transmission-done' \
-      -H 'X-Plex-Version: 1.0' \
-      -H 'Content-Type: application/x-www-form-urlencoded' \
-      --data-binary @- <<EOF
-user[login]=${encoded_username}&user[password]=${encoded_password}
-EOF
-  ); then
+  if ! auth_response=$(curl -s -X POST 'https://plex.tv/users/sign_in.json' \
+    -H 'X-Plex-Client-Identifier: transmission-done-installer' \
+    -H 'X-Plex-Product: transmission-done' \
+    -H 'X-Plex-Version: 1.0' \
+    --data-urlencode "user[login]=${username}" \
+    --data-urlencode "user[password]=${password}"); then
     printf 'Error: Network request failed\n' >&2
-    unset username password encoded_username encoded_password
+    unset username password
     return 1
   fi
 
+  if [[ -n "${DEBUG_MODE:-}" ]]; then
+    # Check if response contains authToken (success) or error
+    if echo "${auth_response}" | jq -e '.user.authToken' >/dev/null 2>&1; then
+      printf '[DEBUG] API Response: Authentication successful (token received)\n' >&2
+    else
+      # Show error message but not any tokens
+      local error_msg
+      error_msg=$(echo "${auth_response}" | jq -r '.error // "Unknown error"' 2>/dev/null)
+      printf '[DEBUG] API Response: Authentication failed - %s\n' "${error_msg}" >&2
+      printf '[DEBUG] Full response (no token): %s\n' "${auth_response}" >&2
+    fi
+  fi
+
   # Clear sensitive data from memory
-  unset username password encoded_username encoded_password
+  unset username password
 
   # Extract the authentication token using jq
   local auth_token
@@ -559,6 +555,11 @@ main() {
   printf '==============================================\n' >&2
   printf 'Transmission-Plex Media Manager Installation\n' >&2
   printf '==============================================\n' >&2
+
+  if [[ -n "${DEBUG_MODE:-}" ]]; then
+    printf '\n⚠️  DEBUG MODE ENABLED - Credentials will be logged\n' >&2
+    printf '==============================================\n\n' >&2
+  fi
 
   # Check dependencies first
   if ! check_dependencies; then
