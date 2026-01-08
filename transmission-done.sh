@@ -1,5 +1,23 @@
 #!/usr/bin/env bash
-PATH=${PATH}:/usr/local/bin
+
+# Detect architecture and set Homebrew prefix BEFORE strict mode
+ARCH="$(arch)"
+case "${ARCH}" in
+  i386)
+    export HOMEBREW_PREFIX="/usr/local"
+    ;;
+  arm64)
+    export HOMEBREW_PREFIX="/opt/homebrew"
+    ;;
+  *)
+    printf 'Error: Unsupported architecture: %s\n' "${ARCH}" >&2
+    exit 1
+    ;;
+esac
+
+# Set PATH to include Homebrew and common locations
+PATH="/usr/bin:/bin:/usr/sbin:/sbin:${HOMEBREW_PREFIX}/bin:/usr/local/bin"
+export PATH
 
 # Strict mode
 set -euo pipefail
@@ -12,13 +30,38 @@ trap 'log "Script interrupted"; exit 1' INT TERM
 TEST_MODE="${TEST_MODE:-false}"
 TEST_RUNNER="${TEST_RUNNER:-false}"
 
-# Constants
-BASH_SOURCE_REALPATH="$(realpath "${BASH_SOURCE[0]}")"
-SCRIPT_DIR="$(dirname "${BASH_SOURCE_REALPATH}")"
+# Resolve symlinks to get real script location
+SCRIPT_SOURCE="${BASH_SOURCE[0]}"
+while [[ -L "${SCRIPT_SOURCE}" ]]; do
+  SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
+  SCRIPT_SOURCE="$(readlink "${SCRIPT_SOURCE}")"
+  [[ ${SCRIPT_SOURCE} != /* ]] && SCRIPT_SOURCE="${SCRIPT_DIR}/${SCRIPT_SOURCE}"
+done
+SCRIPT_DIR="$(cd -P "$(dirname "${SCRIPT_SOURCE}")" && pwd)"
 readonly SCRIPT_DIR
+
+# Derive HOME from script path (assumes script is in user's home directory tree)
+if [[ "${SCRIPT_DIR}" =~ ^(/Users/[^/]+) ]]; then
+  DERIVED_HOME="${BASH_REMATCH[1]}"
+elif [[ "${SCRIPT_DIR}" =~ ^(/home/[^/]+) ]]; then
+  DERIVED_HOME="${BASH_REMATCH[1]}"
+else
+  # Fallback to USER-based home
+  DERIVED_HOME="/Users/${USER}"
+fi
+
+# Use HOME if set and valid, otherwise use derived value
+EFFECTIVE_HOME="${HOME:-${DERIVED_HOME}}"
+readonly EFFECTIVE_HOME
+
+# Constants
 readonly LOCAL_CONFIG="${SCRIPT_DIR}/config.yml"
-readonly USER_CONFIG="${HOME}/.config/transmission-done/config.yml"
+readonly USER_CONFIG="${EFFECTIVE_HOME}/.config/transmission-done/config.yml"
 readonly CURL_OPTS=(-s -f -m 10 -v) # silent, fail on error, 10 second timeout, verbose
+
+# Dependency paths (use full paths to avoid PATH issues in Transmission environment)
+readonly YQ="${HOMEBREW_PREFIX}/bin/yq"
+readonly FILEBOT="${HOMEBREW_PREFIX}/bin/filebot"
 
 # Config vars
 PLEX_SERVER=""
@@ -36,7 +79,7 @@ LAST_PREVIEW_OUTPUT=""
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
-  if ! yq eval '.' "${config_file}" >/dev/null 2>&1; then
+  if ! "${YQ}" eval '.' "${config_file}" >/dev/null 2>&1; then
     printf 'Error: Invalid YAML in config file: %s\n' "${config_file}" >&2
     return 1
   fi
@@ -47,7 +90,7 @@ get_home_directory() {
   local config_file="$1"
   local default_home
 
-  default_home=$(yq eval '.paths.default_home' "${config_file}")
+  default_home=$("${YQ}" eval '.paths.default_home' "${config_file}")
   if [[ -z "${default_home}" ]]; then
     printf 'Error: default_home not set in config\n' >&2
     return 1
@@ -61,8 +104,8 @@ get_home_directory() {
 }
 
 read_config() {
-  if ! yq --version &>/dev/null; then
-    printf 'Error: yq required, not found in PATH.\nTry: brew install yq' >&2
+  if ! "${YQ}" --version &>/dev/null; then
+    printf 'Error: yq required at %s\nTry: brew install yq\n' "${YQ}" >&2
     return 1
   fi
 
@@ -81,9 +124,9 @@ read_config() {
   local effective_home
   effective_home=$(get_home_directory "${config_file}") || return 1
 
-  PLEX_SERVER=$(yq eval '.plex.server' "${config_file}")
-  PLEX_TOKEN=$(yq eval '.plex.token' "${config_file}")
-  PLEX_MEDIA_PATH=$(yq eval '.plex.media_path' "${config_file}")
+  PLEX_SERVER=$("${YQ}" eval '.plex.server' "${config_file}")
+  PLEX_TOKEN=$("${YQ}" eval '.plex.token' "${config_file}")
+  PLEX_MEDIA_PATH=$("${YQ}" eval '.plex.media_path' "${config_file}")
 
   local missing_values=()
   [[ -z "${PLEX_SERVER}" ]] && missing_values+=("plex.server")
@@ -96,9 +139,9 @@ read_config() {
   fi
 
   local log_path
-  log_path=$(yq eval '.logging.file' "${config_file}")
+  log_path=$("${YQ}" eval '.logging.file' "${config_file}")
   LOG_FILE="${effective_home}/${log_path}"
-  MAX_LOG_SIZE=$(yq eval '.logging.max_size' "${config_file}")
+  MAX_LOG_SIZE=$("${YQ}" eval '.logging.max_size' "${config_file}")
 
   if [[ "${TEST_MODE}" != "true" ]]; then
     printf 'Using config file: %s\n' "${config_file}" >&2
@@ -193,9 +236,9 @@ check_dependencies() {
     fi
   done
 
-  # Check for FileBot (special case, might be in different locations)
-  if ! command -v filebot &>/dev/null && [[ ! -x "/usr/local/bin/filebot" ]]; then
-    missing_required+=("filebot")
+  # Check for FileBot using globally defined path
+  if [[ ! -x "${FILEBOT}" ]]; then
+    missing_required+=("filebot (expected at ${FILEBOT})")
     has_errors=true
   fi
 
@@ -316,8 +359,7 @@ run_filebot() {
 
     return 1
   else
-    local FILEBOT
-    FILEBOT="$(command -v filebot 2>/dev/null || echo "/usr/local/bin/filebot")"
+    # Use globally defined FILEBOT path
     "${FILEBOT}" "$@"
   fi
 }
