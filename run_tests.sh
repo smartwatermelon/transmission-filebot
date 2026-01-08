@@ -29,8 +29,9 @@ check_dependencies() {
 
   # Check for bats-support and bats-assert by looking for their libraries
   # These are typically installed alongside bats-core but are separate packages
-  local bats_lib_dir
-  if command -v bats &>/dev/null; then
+  # Only check library paths if both bats and brew are available
+  if command -v bats &>/dev/null && command -v brew &>/dev/null; then
+    local bats_lib_dir
     bats_lib_dir="$(brew --prefix)/lib"
     if [[ ! -d "${bats_lib_dir}/bats-support" ]]; then
       missing_deps+=("bats-support")
@@ -40,6 +41,11 @@ check_dependencies() {
       missing_deps+=("bats-assert")
       missing_brew_deps+=("bats-assert")
     fi
+  elif command -v bats &>/dev/null; then
+    # bats exists but brew doesn't - assume support/assert needed
+    # (can't verify library paths without brew --prefix)
+    missing_deps+=("bats-support" "bats-assert")
+    missing_brew_deps+=("bats-support" "bats-assert")
   else
     # If bats isn't installed, we'll need support and assert too
     missing_deps+=("bats-support" "bats-assert")
