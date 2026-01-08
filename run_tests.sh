@@ -16,10 +16,86 @@ NC='\033[0m' # No Color
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
-# Check if BATS is installed
-if ! command -v bats &>/dev/null; then
-  echo -e "${RED}Error: BATS is not installed${NC}"
-  echo "Install with: brew install bats-core bats-support bats-assert"
+# Check and install dependencies
+check_dependencies() {
+  local missing_deps=()
+  local missing_brew_deps=()
+
+  # Required BATS packages
+  if ! command -v bats &>/dev/null; then
+    missing_deps+=("bats-core")
+    missing_brew_deps+=("bats-core")
+  fi
+
+  # Check for bats-support and bats-assert by looking for their libraries
+  # These are typically installed alongside bats-core but are separate packages
+  # Only check library paths if both bats and brew are available
+  if command -v bats &>/dev/null && command -v brew &>/dev/null; then
+    local bats_lib_dir
+    bats_lib_dir="$(brew --prefix)/lib"
+    if [[ ! -d "${bats_lib_dir}/bats-support" ]]; then
+      missing_deps+=("bats-support")
+      missing_brew_deps+=("bats-support")
+    fi
+    if [[ ! -d "${bats_lib_dir}/bats-assert" ]]; then
+      missing_deps+=("bats-assert")
+      missing_brew_deps+=("bats-assert")
+    fi
+  elif command -v bats &>/dev/null; then
+    # bats exists but brew doesn't - assume support/assert needed
+    # (can't verify library paths without brew --prefix)
+    missing_deps+=("bats-support" "bats-assert")
+    missing_brew_deps+=("bats-support" "bats-assert")
+  else
+    # If bats isn't installed, we'll need support and assert too
+    missing_deps+=("bats-support" "bats-assert")
+    missing_brew_deps+=("bats-support" "bats-assert")
+  fi
+
+  if [[ ${#missing_deps[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  # Report missing dependencies
+  echo -e "${RED}Missing required test dependencies:${NC}"
+  for dep in "${missing_deps[@]}"; do
+    printf '  - %s\n' "${dep}"
+  done
+  echo
+
+  # Offer to install brew packages
+  if [[ ${#missing_brew_deps[@]} -gt 0 ]]; then
+    if ! command -v brew &>/dev/null; then
+      echo -e "${RED}Error: Homebrew not found. Install from https://brew.sh/${NC}"
+      return 1
+    fi
+
+    echo -e "${YELLOW}Install missing dependencies with Homebrew? [y/N]:${NC} "
+    read -r response
+
+    case "${response}" in
+      [yY][eE][sS] | [yY])
+        echo -e "${BLUE}Installing: ${missing_brew_deps[*]}${NC}"
+        if brew install "${missing_brew_deps[@]}"; then
+          echo -e "${GREEN}Dependencies installed successfully.${NC}"
+          echo
+        else
+          echo -e "${RED}Error: Failed to install dependencies${NC}"
+          return 1
+        fi
+        ;;
+      *)
+        echo -e "${YELLOW}Installation cancelled. Please install manually:${NC}"
+        echo "  brew install ${missing_brew_deps[*]}"
+        return 1
+        ;;
+    esac
+  fi
+
+  return 0
+}
+
+if ! check_dependencies; then
   exit 1
 fi
 
