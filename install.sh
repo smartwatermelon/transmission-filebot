@@ -370,6 +370,62 @@ get_plex_library_info() {
   return 0
 }
 
+find_common_root() {
+  local -a paths=("$@")
+
+  if [[ ${#paths[@]} -eq 0 ]]; then
+    return 1
+  fi
+
+  # If only one path, return its parent directory
+  if [[ ${#paths[@]} -eq 1 ]]; then
+    dirname "${paths[0]}"
+    return 0
+  fi
+
+  # Find common prefix by comparing path components
+  local first_path="${paths[0]}"
+  IFS='/' read -ra components <<<"${first_path}"
+
+  local common_depth=${#components[@]}
+
+  # Compare with all other paths to find common depth
+  for path in "${paths[@]:1}"; do
+    IFS='/' read -ra path_components <<<"${path}"
+
+    local i=0
+    while [[ ${i} -lt ${#components[@]} && ${i} -lt ${#path_components[@]} ]]; do
+      if [[ "${components[i]}" != "${path_components[i]}" ]]; then
+        break
+      fi
+      ((i += 1))
+    done
+
+    if [[ ${i} -lt ${common_depth} ]]; then
+      common_depth=${i}
+    fi
+  done
+
+  # Build common root from components
+  local common_root=""
+  for ((i = 0; i < common_depth; i++)); do
+    if [[ ${i} -eq 0 && -z "${components[i]}" ]]; then
+      common_root="/"
+    elif [[ ${i} -eq 0 ]]; then
+      common_root="${components[i]}"
+    else
+      common_root="${common_root}/${components[i]}"
+    fi
+  done
+
+  # Return common root or "/" if nothing in common
+  if [[ -z "${common_root}" ]]; then
+    echo "/"
+  else
+    echo "${common_root}"
+  fi
+}
+
 get_media_path() {
   local plex_server="$1"
   local token="$2"
@@ -377,6 +433,7 @@ get_media_path() {
 
   printf '\nPlex Media Path\n' >&2
   printf '  This is the root path where FileBot will organize your media.\n' >&2
+  printf '  FileBot will create subdirectories like Movies/ and TV Shows/ under this path.\n' >&2
 
   # Try to get paths from Plex library sections
   local plex_paths
@@ -385,30 +442,46 @@ get_media_path() {
 
   # If we got paths from Plex, present them as options
   if [[ ${get_plex_exit} -eq 0 ]] && [[ -n "${plex_paths}" ]]; then
-    printf '\nDetected Plex library paths:\n' >&2
-
-    local -a path_array=()
+    local -a lib_paths=()
     while IFS= read -r path; do
-      [[ -n "${path}" ]] && path_array+=("${path}")
+      [[ -n "${path}" ]] && lib_paths+=("${path}")
     done <<<"${plex_paths}"
 
-    # Show numbered options
-    local i
-    for i in "${!path_array[@]}"; do
-      printf '  %d) %s\n' "$((i + 1))" "${path_array[i]}" >&2
+    # Find common root of all library paths
+    local common_root
+    common_root=$(find_common_root "${lib_paths[@]}")
+
+    if [[ -n "${DEBUG_MODE:-}" ]]; then
+      printf '[DEBUG] Library paths: %s\n' "${lib_paths[*]}" >&2
+      printf '[DEBUG] Common root: %s\n' "${common_root}" >&2
+    fi
+
+    # Build options array: common root first, then individual paths, then custom
+    local -a options=()
+    options+=("${common_root} (recommended - common root)")
+
+    for path in "${lib_paths[@]}"; do
+      options+=("${path}")
     done
-    printf '  %d) Enter custom path\n' "$((${#path_array[@]} + 1))" >&2
+
+    printf '\nDetected Plex library paths:\n' >&2
+    local i
+    for i in "${!options[@]}"; do
+      printf '  %d) %s\n' "$((i + 1))" "${options[i]}" >&2
+    done
+    printf '  %d) Enter custom path\n' "$((${#options[@]} + 1))" >&2
     printf '\n' >&2
 
-    read -rp "Select option [1-$((${#path_array[@]} + 1))]: " selection
+    read -rp "Select option [1-$((${#options[@]} + 1))]: " selection
 
     if [[ "${selection}" =~ ^[0-9]+$ ]]; then
-      if [[ "${selection}" -ge 1 && "${selection}" -le "${#path_array[@]}" ]]; then
-        # User selected a Plex path (options 1 to N)
-        media_path="${path_array[$((selection - 1))]}"
+      if [[ "${selection}" -ge 1 && "${selection}" -le "${#options[@]}" ]]; then
+        # User selected an option (remove any description in parentheses)
+        media_path="${options[$((selection - 1))]}"
+        media_path="${media_path%% (*}"  # Strip " (recommended...)" suffix
         printf 'Using: %s\n' "${media_path}" >&2
-      elif [[ "${selection}" -eq $((${#path_array[@]} + 1)) ]]; then
-        # User selected custom path option (N+1)
+      elif [[ "${selection}" -eq $((${#options[@]} + 1)) ]]; then
+        # User selected custom path option
         printf '\n' >&2
         read -rp "Enter custom path: " media_path
       else
