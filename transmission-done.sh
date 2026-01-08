@@ -544,10 +544,14 @@ check_files_ready() {
   log "Found ${file_count_preview} media files to validate"
 
   # Phase 1: Quick checks and initial sizes
+  # Note: Storage uses pipe delimiter which is rare but technically allowed in filenames
+  # If a filename contains '|', the extraction in Phase 3 will fail validation
   local file_count=0
   declare -A sizes_before
 
   log "[DEBUG] Starting while loop to process files"
+  # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 3
+  # Both loops read from ${media_files}, use same IFS/read, and increment at same point
   while IFS= read -r file; do
     log "  [DEBUG] Loop iteration - file variable: '${file}'"
     [[ -z "${file}" ]] && continue
@@ -571,7 +575,10 @@ check_files_ready() {
       local file_size
       file_size=$(stat -f%z "${file}" 2>/dev/null || echo "0")
       log "  → File size: ${file_size} bytes"
-      sizes_before["${file}"]="${file_size}"
+
+      # Store size using array index (file paths may contain brackets)
+      log "  [DEBUG] Attempting to store size in array..."
+      sizes_before[${file_count}]="${file}|${file_size}"
       log "  [DEBUG] Stored size for file, continuing to next iteration"
     fi
     log "  [DEBUG] End of loop iteration for file ${file_count}"
@@ -592,6 +599,8 @@ check_files_ready() {
   log "[DEBUG] Sleep completed"
 
   # Phase 3: Check final sizes
+  # IMPORTANT: This loop must have identical iteration/filtering logic to Phase 1
+  # Any mismatch will be caught by the filepath validation below (line ~621)
   log "[DEBUG] Phase 3: Checking final sizes"
   local phase3_count=0
   while IFS= read -r file; do
@@ -600,12 +609,34 @@ check_files_ready() {
     ((phase3_count += 1))
 
     log "  [DEBUG] Checking final size for file ${phase3_count}"
+
+    # Retrieve stored data (format: "filepath|size")
+    local stored_data="${sizes_before[${phase3_count}]}"
+
+    # Validate we have stored data for this index
+    if [[ -z "${stored_data}" ]]; then
+      log "ERROR: No stored data for index ${phase3_count} (file: ${file})"
+      return 1
+    fi
+
+    # Extract and validate stored filepath matches current file
+    local stored_path="${stored_data%|*}"
+    if [[ "${stored_path}" != "${file}" ]]; then
+      log "ERROR: File order mismatch at index ${phase3_count}"
+      log "  Expected: ${file}"
+      log "  Got:      ${stored_path}"
+      return 1
+    fi
+
+    # Extract stored size
+    local size_before="${stored_data#*|}"
+
     local size_after
     size_after=$(stat -f%z "${file}" 2>/dev/null || echo "0")
-    log "  [DEBUG] Size after: ${size_after}, size before: ${sizes_before[${file}]}"
+    log "  [DEBUG] Size after: ${size_after}, size before: ${size_before}"
 
-    if [[ "${sizes_before[${file}]}" != "${size_after}" ]]; then
-      log "File size changed: ${file} (${sizes_before[${file}]} → ${size_after} bytes)"
+    if [[ "${size_before}" != "${size_after}" ]]; then
+      log "File size changed: ${file} (${size_before} → ${size_after} bytes)"
       return 1
     fi
 
