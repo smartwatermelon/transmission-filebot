@@ -213,7 +213,7 @@ load ../test_helper
   process_media_with_fallback "/nonexistent/directory" 2>&1 || true
 
   run cat "${LOG_FILE}"
-  assert_output_contains "Error: Source directory does not exist" "${output}"
+  assert_output_contains "Error: Source path does not exist" "${output}"
 }
 
 @test "process_media_with_fallback: starts with auto-detection" {

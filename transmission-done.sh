@@ -1082,9 +1082,9 @@ process_media_with_fallback() {
   local source_dir="$1"
   local detected_type=""
 
-  # Validate source directory exists
-  if [[ ! -d "${source_dir}" ]]; then
-    log "Error: Source directory does not exist: ${source_dir}"
+  # Validate source path exists (may be a directory or single file)
+  if [[ ! -e "${source_dir}" ]]; then
+    log "Error: Source path does not exist: ${source_dir}"
     return 1
   fi
 
