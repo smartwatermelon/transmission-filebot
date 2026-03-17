@@ -83,6 +83,9 @@ INVOCATION_MODE=""
 # Preview output storage
 LAST_PREVIEW_OUTPUT=""
 
+# Last successful FileBot output (for Plex scan type detection)
+LAST_FILEBOT_OUTPUT=""
+
 # Config validation functions
 validate_config_file() {
   local config_file="$1"
@@ -887,8 +890,9 @@ process_media_with_autodetect() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection (error diagnostics, Plex scan type)
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -917,7 +921,6 @@ process_media_with_autodetect() {
     log "Warning: No files were moved"
     return 1
   fi
-
   log "Auto-detection: ${file_count} files moved successfully"
   return 0
 }
@@ -942,8 +945,9 @@ process_with_database() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -994,8 +998,9 @@ process_with_xattr() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -1075,9 +1080,9 @@ process_media_with_fallback() {
   local source_dir="$1"
   local detected_type=""
 
-  # Validate source directory exists
-  if [[ ! -d "${source_dir}" ]]; then
-    log "Error: Source directory does not exist: ${source_dir}"
+  # Validate source path exists (may be a directory or single file)
+  if [[ ! -e "${source_dir}" ]]; then
+    log "Error: Source path does not exist: ${source_dir}"
     return 1
   fi
 
@@ -1173,13 +1178,10 @@ process_media() {
   fi
 
   # Step 5: Process with comprehensive fallback strategy
-  local filebot_output filebot_exit
-  filebot_output=$(process_media_with_fallback "${source_dir}" 2>&1)
-  filebot_exit=$?
-
-  if [[ ${filebot_exit} -ne 0 ]]; then
+  LAST_FILEBOT_OUTPUT=""
+  if ! process_media_with_fallback "${source_dir}"; then
     log "Error: All FileBot strategies failed"
-    log_filebot_error "${filebot_exit}" "${filebot_output}" "${source_dir}" "fallback-chain"
+    log_filebot_error 1 "${LAST_FILEBOT_OUTPUT}" "${source_dir}" "fallback-chain"
     return 1
   fi
 
@@ -1188,10 +1190,10 @@ process_media() {
   # Step 6: Cleanup and trigger Plex scan
   cleanup_empty_dirs "${source_dir}"
 
-  # Determine media type from processed result for Plex scan
-  # Check if files ended up in TV or Movie directories
+  # Determine media type from FileBot output for Plex scan
+  # LAST_FILEBOT_OUTPUT is set by the successful processing function
   local detected_type="movie" # default
-  if echo "${filebot_output}" | grep -iq "TV Shows"; then
+  if echo "${LAST_FILEBOT_OUTPUT}" | grep -iq "TV Shows"; then
     detected_type="show"
   fi
 
@@ -1547,16 +1549,35 @@ main() {
     rotate_log
     log "Starting post-download processing for ${TR_TORRENT_NAME}"
 
-    # Continue with processing...
-    if ! cleanup_torrent "${TR_TORRENT_DIR}"; then
-      log "Warning: Cleanup failed but continuing"
+    # Construct the actual torrent path
+    # Automated mode: TR_TORRENT_DIR is the parent download directory,
+    #   TR_TORRENT_NAME is the specific torrent within it
+    # Manual mode: TR_TORRENT_DIR is already the user-selected target directory
+    local torrent_path
+    if [[ "${INVOCATION_MODE}" == "automated" ]]; then
+      torrent_path="${TR_TORRENT_DIR}/${TR_TORRENT_NAME}"
+    else
+      torrent_path="${TR_TORRENT_DIR}"
     fi
+    log "Torrent path: ${torrent_path}"
 
-    if ! process_media "${TR_TORRENT_DIR}"; then
-      log "Error: Media processing failed"
+    if [[ ! -e "${torrent_path}" ]]; then
+      log "Error: Torrent path does not exist: ${torrent_path}"
       main_exit_code=1
     else
-      log "Processing completed successfully"
+      # Cleanup only applies to directories (skip for single-file torrents)
+      if [[ -d "${torrent_path}" ]]; then
+        if ! cleanup_torrent "${torrent_path}"; then
+          log "Warning: Cleanup failed but continuing"
+        fi
+      fi
+
+      if ! process_media "${torrent_path}"; then
+        log "Error: Media processing failed"
+        main_exit_code=1
+      else
+        log "Processing completed successfully"
+      fi
     fi
   fi
 
