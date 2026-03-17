@@ -890,8 +890,9 @@ process_media_with_autodetect() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection (error diagnostics, Plex scan type)
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -920,8 +921,6 @@ process_media_with_autodetect() {
     log "Warning: No files were moved"
     return 1
   fi
-
-  LAST_FILEBOT_OUTPUT="${output}"
   log "Auto-detection: ${file_count} files moved successfully"
   return 0
 }
@@ -946,8 +945,9 @@ process_with_database() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -976,8 +976,6 @@ process_with_database() {
     return 1
   fi
 
-  LAST_FILEBOT_OUTPUT="${output}"
-
   log "Database processing (${database}): ${file_count} files moved successfully"
   return 0
 }
@@ -1000,8 +998,9 @@ process_with_xattr() {
     2>&1)
   exit_code=$?
 
-  # Log the output
+  # Log the output and store for caller inspection
   echo "${output}" >>"${LOG_FILE}"
+  LAST_FILEBOT_OUTPUT="${output}"
 
   # In test mode with override, just check exit code
   if [[ "${FILEBOT_TEST_OVERRIDE:-false}" == "true" ]]; then
@@ -1030,7 +1029,6 @@ process_with_xattr() {
     return 1
   fi
 
-  LAST_FILEBOT_OUTPUT="${output}"
   log "xattr processing: ${file_count} files moved successfully"
   return 0
 }
