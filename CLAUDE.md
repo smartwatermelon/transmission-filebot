@@ -36,7 +36,7 @@ Transmission-Plex Media Manager: A bash-based automation system that integrates 
    - Auto-installs bats-core if missing
    - Runs unit tests (test/unit/*.bats)
    - Runs integration tests (test/integration/*.bats)
-   - 110 total tests covering all functionality
+   - 114 total tests covering all functionality
 
 4. **config.yml** - YAML configuration
    - Located at `~/.config/transmission-done/config.yml` (production)
@@ -50,14 +50,14 @@ Transmission-Plex Media Manager: A bash-based automation system that integrates 
 ```
 test/
 ├── test_helper.bash           - Shared test utilities and assertions
-├── unit/                      - Unit tests (63 tests)
+├── unit/                      - Unit tests (84 tests)
 │   ├── test_error_logging.bats
 │   ├── test_file_safety.bats
 │   ├── test_filebot.bats
 │   ├── test_mode_detection.bats
 │   ├── test_plex_api.bats
 │   └── test_type_detection.bats
-└── integration/               - Integration tests (47 tests)
+└── integration/               - Integration tests (30 tests)
     ├── test_manual_mode.bats
     ├── test_movie_workflow.bats
     └── test_tv_workflow.bats
@@ -67,7 +67,7 @@ test/
 
 - `TEST_MODE=true` - Inline tests in transmission-done.sh
 - `TEST_RUNNER=true` - BATS test execution mode
-- `./run_tests.sh` - Runs full BATS suite (110 tests)
+- `./run_tests.sh` - Runs full BATS suite (114 tests)
 
 ### Processing Flow
 
@@ -216,7 +216,7 @@ logging:
 - Test mode mocks external dependencies (Plex API, FileBot, df, stat)
 - Tests run in isolated temp directories (`TEST_TEMP_DIR`)
 - BATS tests use custom assertions in test_helper.bash
-- Expected: 110 tests passing (63 unit + 47 integration)
+- Expected: 114 tests passing (84 unit + 30 integration)
 
 ### Plex API Hardcoded Sections
 
@@ -234,6 +234,73 @@ If your Plex has different IDs, modify `trigger_plex_scan` function.
 - Format string `{plex}` is Plex-optimized naming convention
 - Database selection: `TheTVDB` for TV, `TheMovieDB` for movies
 
+## NAS Storage Configuration
+
+When media files are stored on a NAS (e.g., Synology) mounted via NFS, the NFS export settings are critical for FileBot to successfully move files.
+
+### NFS Export Requirements
+
+The NFS rule on the NAS shared folder must be configured as follows:
+
+| Setting | Required Value | Why |
+|---------|---------------|-----|
+| Privilege | **Read/Write** | FileBot needs to move files and create directories |
+| Squash | **Map all users to admin** | See UID mapping below |
+| Security | **sys** | Standard AUTH_SYS authentication |
+| Enable asynchronous | **Yes** | Performance |
+| Allow non-privileged ports | **Yes** | Required for macOS NFS clients |
+| Allow subfolder access | **Yes** | Media lives in subdirectories |
+
+### UID Mapping Explained
+
+NFS permission checks happen **server-side**, not client-side. The macOS `noowners` mount option only affects local display — the NAS still enforces permissions based on the UID it receives.
+
+The challenge: macOS user UIDs (typically 501, 502) don't match Synology user UIDs (admin = 1024, other users = 1025+). With "No mapping" squash, the NAS receives the macOS UID and checks it against file ownership — which will fail because no Synology user has UID 501/502.
+
+**"Map all users to admin"** solves this by mapping all NFS requests to the Synology admin user (UID 1024), which has full access to the shared folder.
+
+### Directory Permissions
+
+With "Map all users to admin" squash, **directories must be `rwxrwxrwx` (777)**. This is because:
+
+- All NFS requests arrive as UID 1024 (Synology admin)
+- Files/directories may be owned by different UIDs depending on what created them
+- The admin user needs write access via the "other" permission bits
+- This is acceptable for a media server on a firewalled LAN
+
+If directories become non-writable (e.g., after an accidental `chmod 755`), fix from the NAS via SSH:
+
+```bash
+# On the Synology (requires sudo even for admin user):
+sudo find /volume1/MediaShare/Media/ -type d -exec chmod 777 {} +
+```
+
+**Do NOT attempt `chmod` from the NFS client** — it will fail silently or with "Operation not permitted". Always SSH into the NAS.
+
+### NFS Attribute Cache
+
+After changing permissions or ownership on the NAS, the NFS client will serve stale metadata from its attribute cache. To pick up changes:
+
+```bash
+# Unmount and remount the NFS share:
+sudo diskutil unmount force /path/to/mount
+sudo mount -t nfs -o noowners nas.local:/volume1/share /path/to/mount
+```
+
+### Synology ACLs
+
+Synology DSM defaults to "Windows ACL" mode on shared folders, which adds an ACL layer on top of UNIX permissions. The `+` suffix in `ls -la` output on the NAS indicates ACLs are present. These ACLs can **deny writes even when UNIX permissions allow them**. If experiencing unexplained permission issues, check the shared folder's permission model in DSM Control Panel → Shared Folder → Edit → Advanced.
+
+### Containerized Transmission Setup
+
+When Transmission runs in a container (e.g., podman/haugene), it cannot directly invoke macOS scripts. The `transmission-trigger-watcher.sh` daemon bridges this gap:
+
+1. Container writes trigger files to a host-mounted directory on download completion
+2. The watcher daemon polls for trigger files every 60 seconds
+3. On finding a trigger, it maps the container's `/data` path to the macOS NFS mount path
+4. It invokes `transmission-done.sh` with the correct `TR_TORRENT_*` environment variables
+5. Dead-letter handling: after 5 failures, triggers are moved to `.dead` for manual inspection
+
 ## Common Gotchas
 
 1. **PATH issues**: Transmission runs scripts with minimal PATH (`/usr/bin:/bin:/usr/sbin:/sbin`). Script adds `/usr/local/bin:/opt/homebrew/bin` explicitly for Homebrew tools.
@@ -249,6 +316,10 @@ If your Plex has different IDs, modify `trigger_plex_scan` function.
 6. **Test mode environment**: `TEST_RUNNER=true` bypasses Transmission variable validation during BATS test execution. Don't use in production.
 
 7. **Command substitution**: Use `var=$(function)` to capture stdout. Functions must send user messages to stderr (`>&2`), not stdout, to avoid contamination.
+
+8. **FileBot `[MOVE]` output parsing**: FileBot uses the same `[MOVE]` prefix for both successful and failed moves. A successful move logs `[MOVE] from [X] to [Y]`, while a failed move logs `[MOVE] from [X] to [Y] failed due to I/O error [...]`. When counting moved files, always exclude lines containing "failed" — use `grep "\[MOVE\]" | grep -vc "failed"`, not `grep -c "\[MOVE\]"`.
+
+9. **NFS permission errors appear as FileBot I/O errors**: If FileBot reports `Access Denied` with details like `(rwxrwxrwx 502:20 file.mkv -> r-xr-xr-x 502:20 Season 02)`, the issue is NAS-side directory permissions, not FileBot configuration. See the NAS Storage Configuration section.
 
 ## Dependencies
 
@@ -293,11 +364,13 @@ GitHub Actions workflow (`.github/workflows/test.yml`):
 - **ShellCheck Validation** - Lints all shell scripts
 - **Test Summary** - Aggregates results
 
-All 110 tests must pass before merging PRs.
+All 114 tests must pass before merging PRs.
 
 ## Recent Major Changes
 
+- **PR #23**: Fixed false success detection — FileBot `[MOVE] ... failed` lines were counted as successes, masking I/O errors (e.g., NFS permission denied)
+- **PR #21**: Corrected torrent path and Plex scan section detection
 - **PR #11**: Installer now queries Plex for library paths, improved symlink handling
 - **PR #10**: Fixed stdout/stderr separation in install.sh (critical bug fix)
 - **PR #8**: Simplified test runner to only require bats-core
-- **PR #2**: Implemented comprehensive BATS test suite (110 tests)
+- **PR #2**: Implemented comprehensive BATS test suite
