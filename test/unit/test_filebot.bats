@@ -2,9 +2,10 @@
 
 # Tests for FileBot processing functions
 
-# shellcheck disable=SC2030,SC2031,SC2154
+# shellcheck disable=SC2030,SC2031,SC2154,SC2329
 # SC2030/SC2031: BATS runs tests in subshells, variable modifications are intentional
 # SC2154: TEST_TEMP_DIR, TEST_MODE, FILEBOT_TEST_OVERRIDE provided by test_helper
+# SC2329: run_filebot() overrides are invoked indirectly via process_media_with_autodetect
 
 load ../test_helper
 
@@ -258,4 +259,98 @@ load ../test_helper
   run process_media_with_fallback "${test_dir}"
 
   assert_success
+}
+
+# --- [MOVE] counting tests (bug fix: exclude failed moves) ---
+
+@test "process_media_with_autodetect: counts successful [MOVE] lines correctly" {
+  export TEST_MODE=true
+  export FILEBOT_TEST_OVERRIDE=false
+  export LOG_FILE="${TEST_TEMP_DIR}/test.log"
+  : >"${LOG_FILE}"
+
+  local test_dir="${TEST_TEMP_DIR}/media"
+  mkdir -p "${test_dir}"
+
+  # Override run_filebot to emit successful [MOVE] output
+  run_filebot() {
+    echo "[MOVE] from [/a/file.mkv] to [/b/file.mkv]"
+    echo "Processed 1 files"
+    return 0
+  }
+
+  run process_media_with_autodetect "${test_dir}"
+
+  assert_success
+  run cat "${LOG_FILE}"
+  assert_output_contains "1 files moved successfully" "${output}"
+}
+
+@test "process_media_with_autodetect: failed [MOVE] lines are not counted as success" {
+  export TEST_MODE=true
+  export FILEBOT_TEST_OVERRIDE=false
+  export LOG_FILE="${TEST_TEMP_DIR}/test.log"
+  : >"${LOG_FILE}"
+
+  local test_dir="${TEST_TEMP_DIR}/media"
+  mkdir -p "${test_dir}"
+
+  # Override run_filebot to emit only a failed [MOVE] line (Access Denied)
+  run_filebot() {
+    echo "[MOVE] from [/a/file.mkv] to [/b/file.mkv] failed due to I/O error [Access Denied]"
+    echo "Processed 0 files"
+    return 1
+  }
+
+  run process_media_with_autodetect "${test_dir}"
+
+  assert_failure
+  run cat "${LOG_FILE}"
+  assert_output_contains "no files moved" "${output}"
+}
+
+@test "process_media_with_autodetect: mixed success and failure counts only successes" {
+  export TEST_MODE=true
+  export FILEBOT_TEST_OVERRIDE=false
+  export LOG_FILE="${TEST_TEMP_DIR}/test.log"
+  : >"${LOG_FILE}"
+
+  local test_dir="${TEST_TEMP_DIR}/media"
+  mkdir -p "${test_dir}"
+
+  # Override run_filebot to emit one success and one failure
+  run_filebot() {
+    echo "[MOVE] from [/a/good.mkv] to [/b/good.mkv]"
+    echo "[MOVE] from [/a/bad.mkv] to [/b/bad.mkv] failed due to I/O error [Access Denied]"
+    echo "Processed 1 files"
+    return 1
+  }
+
+  run process_media_with_autodetect "${test_dir}"
+
+  assert_success
+  run cat "${LOG_FILE}"
+  assert_output_contains "1 files moved successfully" "${output}"
+}
+
+@test "process_with_database: failed [MOVE] lines are not counted as success" {
+  export TEST_MODE=true
+  export FILEBOT_TEST_OVERRIDE=false
+  export LOG_FILE="${TEST_TEMP_DIR}/test.log"
+  : >"${LOG_FILE}"
+
+  local test_dir="${TEST_TEMP_DIR}/media"
+  mkdir -p "${test_dir}"
+
+  run_filebot() {
+    echo "[MOVE] from [/a/file.mkv] to [/b/file.mkv] failed due to I/O error [Access Denied]"
+    echo "Processed 0 files"
+    return 1
+  }
+
+  run process_with_database "${test_dir}" "TheMovieDB"
+
+  assert_failure
+  run cat "${LOG_FILE}"
+  assert_output_contains "no files moved" "${output}"
 }
