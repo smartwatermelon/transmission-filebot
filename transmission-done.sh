@@ -899,9 +899,10 @@ process_media_with_autodetect() {
     return "${exit_code}"
   fi
 
-  # Count files that were successfully moved
+  # Count files that were successfully moved (exclude "failed" lines —
+  # FileBot emits "[MOVE] from X to Y failed due to ..." for I/O errors)
   local file_count
-  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count=$(echo "${output}" | grep "\[MOVE\]" | grep -vc "failed" 2>/dev/null || printf "0")
   file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
 
   # FileBot returns exit 1 when uncertain about database (TV vs Movie)
@@ -954,9 +955,10 @@ process_with_database() {
     return "${exit_code}"
   fi
 
-  # Count files that were successfully moved
+  # Count files that were successfully moved (exclude "failed" lines —
+  # FileBot emits "[MOVE] from X to Y failed due to ..." for I/O errors)
   local file_count
-  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count=$(echo "${output}" | grep "\[MOVE\]" | grep -vc "failed" 2>/dev/null || printf "0")
   file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
 
   # FileBot may return non-zero exit code even when files are moved successfully
@@ -1007,9 +1009,10 @@ process_with_xattr() {
     return "${exit_code}"
   fi
 
-  # Count files that were successfully moved
+  # Count files that were successfully moved (exclude "failed" lines —
+  # FileBot emits "[MOVE] from X to Y failed due to ..." for I/O errors)
   local file_count
-  file_count=$(echo "${output}" | grep -c "\[MOVE\]" 2>/dev/null || printf "0")
+  file_count=$(echo "${output}" | grep "\[MOVE\]" | grep -vc "failed" 2>/dev/null || printf "0")
   file_count="${file_count//[^0-9]/}" # Remove non-numeric characters including newlines
 
   # FileBot may return non-zero exit code even when files are moved successfully
