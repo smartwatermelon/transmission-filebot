@@ -120,6 +120,70 @@ Create `MediaProcessor.app` using Automator (see `CREATE_AUTOMATOR_APP.md`):
 - **Notifications**: macOS notifications with success/failure sounds
 - **No Transmission Required**: Works independently of Transmission
 
+## NAS Storage Setup
+
+If your Plex media library lives on a NAS (e.g., Synology) mounted via NFS, the NFS export settings must be configured correctly for FileBot to move files.
+
+### NFS Export Settings (Synology DSM)
+
+In **Control Panel → Shared Folder → [your share] → NFS Permissions**, create or edit the NFS rule:
+
+| Setting | Value | Notes |
+|---------|-------|-------|
+| Hostname or IP | Your client's IP or subnet (e.g., `10.0.12.0/22`) | Restrict to your LAN |
+| Privilege | **Read/Write** | Required for FileBot to move files |
+| Squash | **Map all users to admin** | See explanation below |
+| Security | **sys** | Standard UNIX authentication |
+| Enable asynchronous | **Yes** | Better performance |
+| Allow non-privileged ports | **Yes** | Required for macOS clients |
+| Allow subfolder access | **Yes** | Media lives in subdirectories |
+
+### Why "Map all users to admin"?
+
+NFS permission checks happen **on the NAS**, not on your Mac. The macOS `noowners` mount option only affects how files appear locally — the NAS still enforces UNIX permissions based on the user ID (UID) it receives with each request.
+
+The problem: macOS user UIDs (501, 502, etc.) don't match Synology user UIDs (admin = 1024). With "No mapping", the NAS receives your macOS UID and can't match it to any NAS user — so writes are denied even though local permissions look fine.
+
+"Map all users to admin" solves this by remapping all NFS requests to the Synology admin user, which has full access to the shared folder.
+
+### Directory Permissions
+
+With "Map all users to admin", directories should be `rwxrwxrwx` (777). This is safe for a media server on a firewalled LAN.
+
+If directories lose write permissions (FileBot will report `Access Denied`), fix from the NAS:
+
+```bash
+# SSH into your NAS (requires sudo even for admin):
+ssh admin@your-nas
+sudo find /volume1/YourShare/Media/ -type d -exec chmod 777 {} +
+```
+
+> **Important**: `chmod` from the macOS NFS client will fail with "Operation not permitted". Always fix permissions directly on the NAS via SSH.
+
+### macOS NFS Mount
+
+Mount the NFS share with `noowners`:
+
+```bash
+sudo mount -t nfs -o noowners your-nas.local:/volume1/YourShare /path/to/mount
+```
+
+After changing permissions on the NAS, you may need to remount to clear the NFS attribute cache:
+
+```bash
+sudo diskutil unmount force /path/to/mount
+sudo mount -t nfs -o noowners your-nas.local:/volume1/YourShare /path/to/mount
+```
+
+### Containerized Transmission
+
+If Transmission runs in a container (e.g., Docker/podman with the haugene image), it cannot directly invoke macOS scripts. The `transmission-trigger-watcher.sh` daemon bridges this:
+
+1. The container writes a trigger file when a download completes
+2. The watcher daemon (running on the host) polls for triggers every 60 seconds
+3. It maps container paths to macOS NFS mount paths and invokes `transmission-done.sh`
+4. Failed triggers are retried up to 5 times, then moved to `.dead` for manual inspection
+
 ## Troubleshooting
 
 ### Environment Variables
@@ -164,7 +228,12 @@ env > /tmp/transmission-env.log
    - Verify FileBot is in your PATH
    - Check if the target media directory exists and is writable
 
-3. **Plex not updating**
+3. **FileBot reports "Access Denied" or files not moving**
+   - This is almost always a NAS/NFS permission issue, not a FileBot problem
+   - Check that the target directory is writable (see [NAS Storage Setup](#nas-storage-setup))
+   - FileBot logs both successful and failed moves with `[MOVE]` — check the log for `failed due to I/O error`
+
+4. **Plex not updating**
    - Verify your Plex token is correct
    - Ensure Plex server is running
    - Check server URL in config.yml
@@ -257,9 +326,9 @@ Test complete end-to-end workflows:
 
 ### Test Coverage
 
-- **110 comprehensive tests** covering all major functionality
-- **63 unit tests** verify individual components in isolation
-- **47 integration tests** verify complete end-to-end workflows
+- **114 comprehensive tests** covering all major functionality
+- **84 unit tests** verify individual components in isolation
+- **30 integration tests** verify complete end-to-end workflows
 - All tests run in TEST_MODE to avoid side effects
 - Comprehensive coverage of error conditions and edge cases
 - Mock implementations for FileBot and Plex API calls
@@ -296,9 +365,9 @@ This project began as a simple "done-cleanup" script that removed unwanted files
 - **Plex Integration**: Implemented automatic library updates
 - **Robust Error Handling**: Added retry logic and comprehensive logging
 - **Configuration Management**: Moved from hardcoded values to YAML configuration
-- **Test Suite (2026-01)**: Comprehensive BATS test infrastructure with 110 tests
-  - 63 unit tests for individual functions
-  - 47 integration tests for complete workflows
+- **Test Suite (2026-01)**: Comprehensive BATS test infrastructure with 114 tests
+  - 84 unit tests for individual functions
+  - 30 integration tests for complete workflows
   - Continuous integration with GitHub Actions
 - **Unified Installer (2026-01)**: One-command installation with `install.sh`
   - Automatic dependency installation with user consent
