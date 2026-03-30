@@ -540,12 +540,30 @@ check_files_ready() {
 
   log "Validating files are ready for processing (${stability_seconds}s stability check)"
 
-  # Find all media files with corrected syntax
-  local media_files
-  media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null || true)
+  # NFS + VirtioFS cache invalidation: when Transmission completes a download inside
+  # a podman container, the trigger file (on local disk) arrives before VirtioFS
+  # propagates the directory metadata to the host NFS client. Force a readdir() to
+  # refresh the NFS attribute cache, and retry if the directory appears empty.
+  local media_files=""
+  local nfs_retry
+  for nfs_retry in 1 2 3; do
+    # Force NFS directory cache revalidation by reading the directory listing
+    ls "${source_dir}" >/dev/null 2>&1 || true
+
+    media_files=$(find "${source_dir}" -type f \( -iname "*.mkv" -o -iname "*.mp4" -o -iname "*.avi" -o -iname "*.m4v" \) 2>/dev/null || true)
+
+    if [[ -n "${media_files}" ]]; then
+      break
+    fi
+
+    if [[ "${nfs_retry}" -lt 3 ]]; then
+      log "No media files visible yet (NFS cache retry ${nfs_retry}/3, waiting 5s)"
+      sleep 5
+    fi
+  done
 
   if [[ -z "${media_files}" ]]; then
-    log "Warning: No media files found in ${source_dir}"
+    log "Warning: No media files found in ${source_dir} (after NFS cache retries)"
     return 1
   fi
 
